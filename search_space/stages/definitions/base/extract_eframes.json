@@ -1,0 +1,31 @@
+{
+  "id": "extract_eframes",
+  "name": "Extract E-Frames",
+  "category": "isp",
+  "description": "Extract exposure frames from sensor stream.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/extract_eframes.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/extract_eframes.json"
+    }
+  }
+}

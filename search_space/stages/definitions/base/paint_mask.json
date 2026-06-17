@@ -1,0 +1,46 @@
+{
+  "id": "paint_mask",
+  "name": "Paint Mask",
+  "category": "enhancement",
+  "description": "Overlay or paint a mask on an image.",
+  "parameters": [
+    {
+      "name": "mask",
+      "token": "@mask",
+      "type": "image",
+      "required": true,
+      "description": "Mask image."
+    },
+    {
+      "name": "color",
+      "token": "@color",
+      "type": "array",
+      "required": true,
+      "description": "Color value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/paint_mask.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/paint_mask.json"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "id": "reproject_3d",
+  "name": "Reproject 3D",
+  "category": "stereo",
+  "description": "Reproject disparity image to 3D coordinates.",
+  "parameters": [
+    {
+      "name": "matrix",
+      "token": "@matrix",
+      "type": "array",
+      "required": true,
+      "description": "Stereo reprojection matrix."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/reproject_3d.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/reproject_3d.json"
+    }
+  }
+}

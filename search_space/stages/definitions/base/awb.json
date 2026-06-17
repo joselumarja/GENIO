@@ -1,0 +1,36 @@
+{
+  "id": "awb",
+  "name": "AWB",
+  "category": "isp",
+  "description": "Apply white balance correction.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/awb.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/awb.json"
+    }
+  }
+}

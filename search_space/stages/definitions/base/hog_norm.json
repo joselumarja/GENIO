@@ -1,0 +1,28 @@
+{
+  "id": "hog_norm",
+  "name": "HOG Normalization",
+  "category": "features",
+  "description": "Normalize HOG descriptor blocks.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/hog_norm.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/hog_norm.json"
+    }
+  }
+}

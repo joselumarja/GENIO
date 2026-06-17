@@ -1,0 +1,43 @@
+{
+  "id": "gain_control",
+  "name": "Gain Control",
+  "category": "isp",
+  "description": "Apply gain control.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    },
+    {
+      "name": "gain",
+      "token": "@gain",
+      "type": "number",
+      "required": true,
+      "description": "Gain value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/gain_control.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/gain_control.json"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "bfmatcher",
+  "name": "BF Matcher",
+  "category": "features",
+  "description": "Brute-force descriptor matching.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "array"
+      },
+      {
+        "format": "array"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/bfmatcher.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/bfmatcher.json"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "sgbm",
+  "name": "Semi Global Block Matching",
+  "category": "stereo",
+  "description": "Compute disparity using semi-global block matching.",
+  "parameters": [
+    {
+      "name": "num_disparities",
+      "token": "@num_disparities",
+      "type": "integer",
+      "required": true,
+      "description": "Stereo matcher disparity range."
+    },
+    {
+      "name": "block_size",
+      "token": "@block_size",
+      "type": "integer",
+      "required": true,
+      "description": "Stereo matcher block size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/sgbm.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/sgbm.json"
+    }
+  }
+}

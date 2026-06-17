@@ -1,0 +1,31 @@
+{
+  "id": "bitwise_or",
+  "name": "Bitwise OR",
+  "category": "arithmetic",
+  "description": "Compute per-pixel bitwise OR.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/bitwise_or.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/bitwise_or.json"
+    }
+  }
+}

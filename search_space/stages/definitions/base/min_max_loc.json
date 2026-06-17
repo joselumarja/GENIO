@@ -1,0 +1,28 @@
+{
+  "id": "min_max_loc",
+  "name": "Min Max Loc",
+  "category": "statistics",
+  "description": "Compute minimum and maximum values and locations.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "scalar"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/min_max_loc.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/min_max_loc.json"
+    }
+  }
+}

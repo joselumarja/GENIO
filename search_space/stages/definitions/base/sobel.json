@@ -1,0 +1,46 @@
+{
+  "id": "sobel",
+  "name": "Sobel",
+  "category": "gradients",
+  "description": "Compute Sobel image gradients.",
+  "parameters": [
+    {
+      "name": "filter_width",
+      "token": "@FILTER_WIDTH",
+      "type": "integer",
+      "required": true,
+      "description": "Filter or kernel width."
+    },
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Border handling policy."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/sobel.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/sobel.json"
+    }
+  }
+}

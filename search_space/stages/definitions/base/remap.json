@@ -1,0 +1,60 @@
+{
+  "id": "remap",
+  "name": "Remap",
+  "category": "geometry",
+  "description": "Apply generic geometrical remapping.",
+  "parameters": [
+    {
+      "name": "interpolation",
+      "token": "@INTERPOLATION",
+      "type": "enum",
+      "required": true,
+      "description": "Interpolation policy."
+    },
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Border handling policy."
+    },
+    {
+      "name": "map_x",
+      "token": "@map_x",
+      "type": "array",
+      "required": true,
+      "description": "X-coordinate remap matrix."
+    },
+    {
+      "name": "map_y",
+      "token": "@map_y",
+      "type": "array",
+      "required": true,
+      "description": "Y-coordinate remap matrix."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "map"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/remap.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/remap.json"
+    }
+  }
+}

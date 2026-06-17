@@ -1,0 +1,31 @@
+{
+  "id": "phase",
+  "name": "Phase",
+  "category": "gradients",
+  "description": "Compute gradient phase from two gradient images.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/phase.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/phase.json"
+    }
+  }
+}

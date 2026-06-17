@@ -1,0 +1,25 @@
+{
+  "id": "corner_update",
+  "name": "Corner Update",
+  "category": "features",
+  "description": "Update tracked corner locations.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/corner_update.json"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "de_gamma",
+  "name": "De-Gamma",
+  "category": "isp",
+  "description": "Apply inverse gamma correction.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    },
+    {
+      "name": "gamma",
+      "token": "@gamma",
+      "type": "number",
+      "required": true,
+      "description": "Gamma value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/de_gamma.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/de_gamma.json"
+    }
+  }
+}

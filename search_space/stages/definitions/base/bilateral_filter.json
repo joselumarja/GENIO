@@ -1,0 +1,57 @@
+{
+  "id": "bilateral_filter",
+  "name": "Bilateral Filter",
+  "category": "filtering",
+  "description": "Apply edge-preserving bilateral filtering.",
+  "parameters": [
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Border handling policy."
+    },
+    {
+      "name": "diameter",
+      "token": "@diameter",
+      "type": "integer",
+      "required": true,
+      "description": "Bilateral filter diameter."
+    },
+    {
+      "name": "sigma_color",
+      "token": "@sigma_color",
+      "type": "number",
+      "required": true,
+      "description": "Bilateral filter sigmaColor."
+    },
+    {
+      "name": "sigma_space",
+      "token": "@sigma_space",
+      "type": "number",
+      "required": true,
+      "description": "Bilateral filter sigmaSpace."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/bilateral_filter.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/bilateral_filter.json"
+    }
+  }
+}

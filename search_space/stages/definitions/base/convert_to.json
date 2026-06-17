@@ -1,0 +1,50 @@
+{
+  "id": "convert_to",
+  "name": "Convert To",
+  "category": "type_conversion",
+  "description": "Convert image pixel type with optional scaling.",
+  "parameters": [
+    {
+      "name": "alpha",
+      "token": "@alpha",
+      "type": "number",
+      "required": true,
+      "description": "First scale or weight factor."
+    },
+    {
+      "name": "beta",
+      "token": "@beta",
+      "type": "number",
+      "required": true,
+      "description": "Second scale or weight factor."
+    },
+    {
+      "name": "dtype",
+      "token": "@dtype",
+      "type": "dtype",
+      "required": true,
+      "description": "Output data type."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/convert_to.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/convert_to.json"
+    }
+  }
+}

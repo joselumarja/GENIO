@@ -1,0 +1,53 @@
+{
+  "id": "add_weighted",
+  "name": "Add Weighted",
+  "category": "image_arithmetic",
+  "description": "Compute weighted sum of two images.",
+  "parameters": [
+    {
+      "name": "alpha",
+      "token": "@alpha",
+      "type": "number",
+      "required": true,
+      "description": "First scale or weight factor."
+    },
+    {
+      "name": "beta",
+      "token": "@beta",
+      "type": "number",
+      "required": true,
+      "description": "Second scale or weight factor."
+    },
+    {
+      "name": "gamma",
+      "token": "@gamma",
+      "type": "number",
+      "required": true,
+      "description": "Gamma value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/add_weighted.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/add_weighted.json"
+    }
+  }
+}

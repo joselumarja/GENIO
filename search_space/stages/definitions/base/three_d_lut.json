@@ -1,0 +1,36 @@
+{
+  "id": "three_d_lut",
+  "name": "3D LUT",
+  "category": "enhancement",
+  "description": "Apply 3D look-up table color transform.",
+  "parameters": [
+    {
+      "name": "lut",
+      "token": "@lut",
+      "type": "array",
+      "required": true,
+      "description": "Look-up table."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/three_d_lut.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/three_d_lut.json"
+    }
+  }
+}

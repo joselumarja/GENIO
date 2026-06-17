@@ -1,0 +1,28 @@
+{
+  "id": "rgb_to_gray",
+  "name": "RGB To Gray",
+  "category": "color",
+  "description": "Convert RGB image to grayscale.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/rgb_to_gray.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/rgb_to_gray.json"
+    }
+  }
+}

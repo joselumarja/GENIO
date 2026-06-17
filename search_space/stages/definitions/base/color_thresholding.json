@@ -1,0 +1,43 @@
+{
+  "id": "color_thresholding",
+  "name": "Color Thresholding",
+  "category": "thresholding",
+  "description": "Apply multi-channel color thresholding.",
+  "parameters": [
+    {
+      "name": "low_thresh",
+      "token": "@low_thresh",
+      "type": "array",
+      "required": true,
+      "description": "Lower threshold vector."
+    },
+    {
+      "name": "high_thresh",
+      "token": "@high_thresh",
+      "type": "array",
+      "required": true,
+      "description": "Upper threshold vector."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/color_thresholding.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/color_thresholding.json"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "gaussian_filter",
+  "name": "Gaussian Filter",
+  "category": "filtering",
+  "description": "Apply Gaussian blur filtering.",
+  "parameters": [
+    {
+      "name": "filter_width",
+      "token": "@FILTER_WIDTH",
+      "type": "integer",
+      "required": true,
+      "description": "Filter or kernel width."
+    },
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Border handling policy."
+    },
+    {
+      "name": "sigma_x",
+      "token": "@sigma_x",
+      "type": "number",
+      "required": true,
+      "description": "Gaussian sigma in X direction."
+    },
+    {
+      "name": "sigma_y",
+      "token": "@sigma_y",
+      "type": "number",
+      "required": true,
+      "description": "Gaussian sigma in Y direction."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/gaussian_filter.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/gaussian_filter.json"
+    }
+  }
+}

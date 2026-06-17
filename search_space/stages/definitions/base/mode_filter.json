@@ -1,0 +1,36 @@
+{
+  "id": "mode_filter",
+  "name": "Mode Filter",
+  "category": "filtering",
+  "description": "Apply mode filtering.",
+  "parameters": [
+    {
+      "name": "kernel_size",
+      "token": "@kernel_size",
+      "type": "integer",
+      "required": true,
+      "description": "Kernel size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/mode_filter.json"
+    },
+    "functional": {
+      "scipy": "implementations/functional/scipy/mode_filter.json"
+    }
+  }
+}

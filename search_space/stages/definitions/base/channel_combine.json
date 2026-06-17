@@ -1,0 +1,34 @@
+{
+  "id": "channel_combine",
+  "name": "Channel Combine",
+  "category": "channels",
+  "description": "Combine single-channel images into a multi-channel image.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/channel_combine.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/channel_combine.json"
+    }
+  }
+}

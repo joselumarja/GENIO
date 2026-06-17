@@ -1,0 +1,15 @@
+{
+  "stage": "duplicate_image",
+  "imports": [],
+  "function": [
+    "@output_0 = @input.copy()",
+    "@output_1 = @input.copy()"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@input": "Input image from the previous pipeline step.",
+    "@output_0": "Composition token resolved by the functional composition layer.",
+    "@output_1": "Composition token resolved by the functional composition layer."
+  },
+  "source": "opencv"
+}

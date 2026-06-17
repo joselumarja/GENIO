@@ -1,0 +1,36 @@
+{
+  "id": "bad_pixel_correction",
+  "name": "Bad Pixel Correction",
+  "category": "isp",
+  "description": "Correct defective pixels.",
+  "parameters": [
+    {
+      "name": "kernel_size",
+      "token": "@kernel_size",
+      "type": "integer",
+      "required": true,
+      "description": "Kernel size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/bad_pixel_correction.json"
+    },
+    "functional": {
+      "scipy": "implementations/functional/scipy/bad_pixel_correction.json"
+    }
+  }
+}

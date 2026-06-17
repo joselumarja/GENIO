@@ -1,0 +1,28 @@
+{
+  "id": "rgb_to_hsv",
+  "name": "RGB To HSV",
+  "category": "color",
+  "description": "Convert RGB image to HSV.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/rgb_to_hsv.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/rgb_to_hsv.json"
+    }
+  }
+}

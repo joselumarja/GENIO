@@ -1,0 +1,36 @@
+{
+  "id": "otsu_threshold",
+  "name": "Otsu Threshold",
+  "category": "thresholding",
+  "description": "Compute threshold with Otsu method.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "scalar"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/otsu_threshold.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/otsu_threshold.json"
+    }
+  }
+}

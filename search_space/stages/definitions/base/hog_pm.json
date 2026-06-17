@@ -1,0 +1,34 @@
+{
+  "id": "hog_pm",
+  "name": "HOG Phase Magnitude",
+  "category": "features",
+  "description": "Compute phase and magnitude for HOG descriptor pipeline.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/hog_pm.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/hog_pm.json"
+    }
+  }
+}

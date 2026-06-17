@@ -1,0 +1,31 @@
+{
+  "id": "duplicate_image",
+  "name": "Duplicate Image",
+  "category": "channels",
+  "description": "Duplicate one image stream into two outputs.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/duplicate_image.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/duplicate_image.json"
+    }
+  }
+}

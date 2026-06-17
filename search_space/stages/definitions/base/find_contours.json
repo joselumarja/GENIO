@@ -1,0 +1,43 @@
+{
+  "id": "find_contours",
+  "name": "Find Contours",
+  "category": "features",
+  "description": "Find contours in a binary image.",
+  "parameters": [
+    {
+      "name": "retrieval_mode",
+      "token": "@RETRIEVAL_MODE",
+      "type": "enum",
+      "required": true,
+      "description": "Contour retrieval mode."
+    },
+    {
+      "name": "approximation_method",
+      "token": "@APPROXIMATION_METHOD",
+      "type": "enum",
+      "required": true,
+      "description": "Contour approximation method."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/find_contours.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/find_contours.json"
+    }
+  }
+}

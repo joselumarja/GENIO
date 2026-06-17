@@ -1,0 +1,31 @@
+{
+  "id": "hog_gradients",
+  "name": "HOG Gradients",
+  "category": "features",
+  "description": "Compute gradients for HOG descriptor pipeline.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      },
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/hog_gradients.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/hog_gradients.json"
+    }
+  }
+}

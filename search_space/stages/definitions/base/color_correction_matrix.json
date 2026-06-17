@@ -1,0 +1,50 @@
+{
+  "id": "color_correction_matrix",
+  "name": "Color Correction Matrix",
+  "category": "isp",
+  "description": "Apply color correction matrix.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    },
+    {
+      "name": "matrix",
+      "token": "@matrix",
+      "type": "array",
+      "required": true,
+      "description": "Geometric transform matrix."
+    },
+    {
+      "name": "bias",
+      "token": "@bias",
+      "type": "array",
+      "required": true,
+      "description": "Bias vector."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/color_correction_matrix.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/color_correction_matrix.json"
+    }
+  }
+}

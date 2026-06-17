@@ -1,0 +1,36 @@
+{
+  "id": "channel_extract",
+  "name": "Channel Extract",
+  "category": "channels",
+  "description": "Extract one channel from a multi-channel image.",
+  "parameters": [
+    {
+      "name": "channel",
+      "token": "@channel",
+      "type": "integer",
+      "required": true,
+      "description": "Channel index."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/channel_extract.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/channel_extract.json"
+    }
+  }
+}

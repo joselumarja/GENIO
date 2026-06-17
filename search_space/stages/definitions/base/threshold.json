@@ -1,0 +1,50 @@
+{
+  "id": "threshold",
+  "name": "Threshold",
+  "category": "thresholding",
+  "description": "Apply fixed-level thresholding.",
+  "parameters": [
+    {
+      "name": "threshold",
+      "token": "@threshold",
+      "type": "number",
+      "required": true,
+      "description": "Threshold value."
+    },
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    },
+    {
+      "name": "threshold_type",
+      "token": "@THRESHOLD_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Thresholding mode."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/threshold.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/threshold.json"
+    }
+  }
+}

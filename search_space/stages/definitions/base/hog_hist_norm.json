@@ -1,0 +1,28 @@
+{
+  "id": "hog_hist_norm",
+  "name": "HOG Histogram Normalization",
+  "category": "features",
+  "description": "Normalize HOG histograms.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/hog_hist_norm.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/hog_hist_norm.json"
+    }
+  }
+}

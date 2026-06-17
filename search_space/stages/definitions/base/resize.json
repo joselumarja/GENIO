@@ -1,0 +1,50 @@
+{
+  "id": "resize",
+  "name": "Resize",
+  "category": "geometry",
+  "description": "Resize image to another resolution.",
+  "parameters": [
+    {
+      "name": "out_rows",
+      "token": "@OUT_ROWS",
+      "type": "integer",
+      "required": true,
+      "description": "Output image height."
+    },
+    {
+      "name": "out_cols",
+      "token": "@OUT_COLS",
+      "type": "integer",
+      "required": true,
+      "description": "Output image width."
+    },
+    {
+      "name": "interpolation",
+      "token": "@INTERPOLATION",
+      "type": "enum",
+      "required": true,
+      "description": "Interpolation policy."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/resize.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/resize.json"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "mean_shift",
+  "name": "Mean Shift",
+  "category": "segmentation",
+  "description": "Apply mean-shift filtering/tracking.",
+  "parameters": [
+    {
+      "name": "n_segments",
+      "token": "@n_segments",
+      "type": "integer",
+      "required": true,
+      "description": "Number of segments."
+    },
+    {
+      "name": "compactness",
+      "token": "@compactness",
+      "type": "number",
+      "required": true,
+      "description": "Compactness factor."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/mean_shift.json"
+    },
+    "functional": {
+      "scikit_image": "implementations/functional/scikit_image/mean_shift.json"
+    }
+  }
+}

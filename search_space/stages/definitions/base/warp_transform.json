@@ -1,0 +1,57 @@
+{
+  "id": "warp_transform",
+  "name": "Warp Transform",
+  "category": "geometry",
+  "description": "Apply affine or perspective warp transform.",
+  "parameters": [
+    {
+      "name": "interpolation",
+      "token": "@INTERPOLATION",
+      "type": "enum",
+      "required": true,
+      "description": "Interpolation policy."
+    },
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "required": true,
+      "description": "Border handling policy."
+    },
+    {
+      "name": "matrix",
+      "token": "@matrix",
+      "type": "array",
+      "required": true,
+      "description": "Geometric transform matrix."
+    },
+    {
+      "name": "dsize",
+      "token": "@dsize",
+      "type": "array",
+      "required": true,
+      "description": "Output size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/warp_transform.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/warp_transform.json"
+    }
+  }
+}

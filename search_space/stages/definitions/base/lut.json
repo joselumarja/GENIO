@@ -1,0 +1,36 @@
+{
+  "id": "lut",
+  "name": "LUT",
+  "category": "enhancement",
+  "description": "Apply look-up table transform.",
+  "parameters": [
+    {
+      "name": "lut",
+      "token": "@lut",
+      "type": "array",
+      "required": true,
+      "description": "Look-up table."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/lut.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/lut.json"
+    }
+  }
+}

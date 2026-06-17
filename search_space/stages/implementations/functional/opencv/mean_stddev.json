@@ -1,0 +1,18 @@
+{
+  "stage": "mean_stddev",
+  "imports": [
+    "import cv2 as cv"
+  ],
+  "function": [
+    "mean, stddev = cv.meanStdDev(@input)",
+    "@output_0 = mean",
+    "@output_1 = stddev"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@input": "Input image from the previous pipeline step.",
+    "@output_0": "Composition token resolved by the functional composition layer.",
+    "@output_1": "Composition token resolved by the functional composition layer."
+  },
+  "source": "opencv"
+}

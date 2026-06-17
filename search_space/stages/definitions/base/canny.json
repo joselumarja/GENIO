@@ -1,0 +1,43 @@
+{
+  "id": "canny",
+  "name": "Canny",
+  "category": "edges",
+  "description": "Apply Canny edge detection.",
+  "parameters": [
+    {
+      "name": "threshold",
+      "token": "@threshold",
+      "type": "number",
+      "required": true,
+      "description": "Threshold value."
+    },
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/canny.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/canny.json"
+    }
+  }
+}

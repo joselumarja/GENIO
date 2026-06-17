@@ -1,0 +1,57 @@
+{
+  "id": "dilate",
+  "name": "Dilate",
+  "category": "morphology",
+  "description": "Apply morphological dilation.",
+  "parameters": [
+    {
+      "name": "kernel_shape",
+      "token": "@K_SHAPE",
+      "type": "enum",
+      "required": true,
+      "description": "Structuring element shape."
+    },
+    {
+      "name": "kernel_rows",
+      "token": "@K_ROWS",
+      "type": "integer",
+      "required": true,
+      "description": "Kernel height."
+    },
+    {
+      "name": "kernel_cols",
+      "token": "@K_COLS",
+      "type": "integer",
+      "required": true,
+      "description": "Kernel width."
+    },
+    {
+      "name": "iterations",
+      "token": "@ITERATIONS",
+      "type": "integer",
+      "required": true,
+      "description": "Number of morphology iterations."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/dilate.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/dilate.json"
+    }
+  }
+}

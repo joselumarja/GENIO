@@ -1,0 +1,28 @@
+{
+  "id": "integral_image",
+  "name": "Integral Image",
+  "category": "statistics",
+  "description": "Compute integral image.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/integral_image.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/integral_image.json"
+    }
+  }
+}

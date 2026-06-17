@@ -1,0 +1,28 @@
+{
+  "id": "bitwise_not",
+  "name": "Bitwise NOT",
+  "category": "arithmetic",
+  "description": "Compute per-pixel bitwise NOT.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/bitwise_not.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/bitwise_not.json"
+    }
+  }
+}

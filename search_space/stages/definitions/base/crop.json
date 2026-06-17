@@ -1,0 +1,57 @@
+{
+  "id": "crop",
+  "name": "Crop",
+  "category": "geometry",
+  "description": "Crop a rectangular image region.",
+  "parameters": [
+    {
+      "name": "out_rows",
+      "token": "@OUT_ROWS",
+      "type": "integer",
+      "required": true,
+      "description": "Output image height."
+    },
+    {
+      "name": "out_cols",
+      "token": "@OUT_COLS",
+      "type": "integer",
+      "required": true,
+      "description": "Output image width."
+    },
+    {
+      "name": "y",
+      "token": "@y",
+      "type": "integer",
+      "required": true,
+      "description": "Top coordinate of the crop region."
+    },
+    {
+      "name": "x",
+      "token": "@x",
+      "type": "integer",
+      "required": true,
+      "description": "Left coordinate of the crop region."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/crop.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/crop.json"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "accumulate_squared",
+  "name": "Accumulate Squared",
+  "category": "image_arithmetic",
+  "description": "Accumulate squared image values.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/accumulate_squared.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/accumulate_squared.json"
+    }
+  }
+}

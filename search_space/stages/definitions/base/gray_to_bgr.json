@@ -1,0 +1,28 @@
+{
+  "id": "gray_to_bgr",
+  "name": "Gray To BGR",
+  "category": "color",
+  "description": "Convert grayscale image to BGR.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/gray_to_bgr.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/gray_to_bgr.json"
+    }
+  }
+}

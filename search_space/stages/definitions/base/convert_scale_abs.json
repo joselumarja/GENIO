@@ -1,0 +1,43 @@
+{
+  "id": "convert_scale_abs",
+  "name": "Convert Scale Abs",
+  "category": "type_conversion",
+  "description": "Scale, take absolute value and convert pixel type.",
+  "parameters": [
+    {
+      "name": "alpha",
+      "token": "@alpha",
+      "type": "number",
+      "required": true,
+      "description": "First scale or weight factor."
+    },
+    {
+      "name": "beta",
+      "token": "@beta",
+      "type": "number",
+      "required": true,
+      "description": "Second scale or weight factor."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/convert_scale_abs.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/convert_scale_abs.json"
+    }
+  }
+}

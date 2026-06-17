@@ -1,0 +1,28 @@
+{
+  "id": "pyr_up",
+  "name": "Pyramid Up",
+  "category": "geometry",
+  "description": "Upsample image using Gaussian pyramid.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/pyr_up.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/pyr_up.json"
+    }
+  }
+}

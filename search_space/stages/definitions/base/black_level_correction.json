@@ -1,0 +1,43 @@
+{
+  "id": "black_level_correction",
+  "name": "Black Level Correction",
+  "category": "isp",
+  "description": "Apply black level correction.",
+  "parameters": [
+    {
+      "name": "maxval",
+      "token": "@maxval",
+      "type": "number",
+      "required": true,
+      "description": "Maximum output value."
+    },
+    {
+      "name": "black_level",
+      "token": "@black_level",
+      "type": "number",
+      "required": true,
+      "description": "Black level offset."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/black_level_correction.json"
+    },
+    "functional": {
+      "numpy": "implementations/functional/numpy/black_level_correction.json"
+    }
+  }
+}

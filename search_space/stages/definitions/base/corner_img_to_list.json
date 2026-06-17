@@ -1,0 +1,25 @@
+{
+  "id": "corner_img_to_list",
+  "name": "Corner Image To List",
+  "category": "features",
+  "description": "Convert corner image representation to corner list.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "array"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/corner_img_to_list.json"
+    }
+  }
+}

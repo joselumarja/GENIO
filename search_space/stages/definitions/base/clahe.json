@@ -1,0 +1,43 @@
+{
+  "id": "clahe",
+  "name": "CLAHE",
+  "category": "enhancement",
+  "description": "Apply contrast limited adaptive histogram equalization.",
+  "parameters": [
+    {
+      "name": "clip_limit",
+      "token": "@clip_limit",
+      "type": "number",
+      "required": true,
+      "description": "CLAHE contrast clipping limit."
+    },
+    {
+      "name": "tile_grid_size",
+      "token": "@tile_grid_size",
+      "type": "array",
+      "required": true,
+      "description": "CLAHE tile grid size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/clahe.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/clahe.json"
+    }
+  }
+}

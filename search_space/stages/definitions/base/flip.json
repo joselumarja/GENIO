@@ -1,0 +1,36 @@
+{
+  "id": "flip",
+  "name": "Flip",
+  "category": "geometry",
+  "description": "Flip image around horizontal, vertical or both axes.",
+  "parameters": [
+    {
+      "name": "flip_code",
+      "token": "@flip_code",
+      "type": "enum",
+      "required": true,
+      "description": "Flip direction code."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image"
+      }
+    ],
+    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+  },
+  "implementations": {
+    "hls": {
+      "vitis_vision": "implementations/hls/vitis_vision/flip.json"
+    },
+    "functional": {
+      "opencv": "implementations/functional/opencv/flip.json"
+    }
+  }
+}
