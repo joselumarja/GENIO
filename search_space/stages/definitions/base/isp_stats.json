@@ -7,19 +7,42 @@
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "array"
+        "format": "array",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
       "vitis_vision": "implementations/hls/vitis_vision/isp_stats.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

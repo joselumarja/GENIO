@@ -8,22 +8,22 @@
       "name": "rotate_code",
       "token": "@rotate_code",
       "type": "enum",
-      "required": true,
       "description": "Rotation code."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -32,5 +32,42 @@
     "functional": {
       "opencv": "implementations/functional/opencv/rotate.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "input_ptr_width",
+      "token": "@INPUT_PTR_WIDTH",
+      "description": "Input pointer width resolved by HLS composer."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "output_ptr_width",
+      "token": "@OUTPUT_PTR_WIDTH",
+      "description": "Output pointer width resolved by HLS composer."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "tile_size",
+      "token": "@TILE_SIZE",
+      "description": "Tile size resolved by HLS composer."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

@@ -5,32 +5,55 @@
   "description": "Apply multi-channel color thresholding.",
   "parameters": [
     {
-      "name": "low_thresh",
-      "token": "@low_thresh",
-      "type": "array",
-      "required": true,
-      "description": "Lower threshold vector."
+      "name": "low_0",
+      "token": "@low_0",
+      "type": "integer",
+      "description": "Lower threshold for channel 0."
     },
     {
-      "name": "high_thresh",
-      "token": "@high_thresh",
-      "type": "array",
-      "required": true,
-      "description": "Upper threshold vector."
+      "name": "low_1",
+      "token": "@low_1",
+      "type": "integer",
+      "description": "Lower threshold for channel 1."
+    },
+    {
+      "name": "low_2",
+      "token": "@low_2",
+      "type": "integer",
+      "description": "Lower threshold for channel 2."
+    },
+    {
+      "name": "high_0",
+      "token": "@high_0",
+      "type": "integer",
+      "description": "Upper threshold for channel 0."
+    },
+    {
+      "name": "high_1",
+      "token": "@high_1",
+      "type": "integer",
+      "description": "Upper threshold for channel 1."
+    },
+    {
+      "name": "high_2",
+      "token": "@high_2",
+      "type": "integer",
+      "description": "Upper threshold for channel 2."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -39,5 +62,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/color_thresholding.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "maxcolors",
+      "token": "@MAXCOLORS",
+      "description": "Maximum colors value resolved by composer."
+    }
+  ]
 }

@@ -8,43 +8,34 @@
       "name": "filter_width",
       "token": "@FILTER_WIDTH",
       "type": "integer",
-      "required": true,
       "description": "Filter or kernel width."
     },
     {
       "name": "border_type",
       "token": "@BORDER_TYPE",
       "type": "enum",
-      "required": true,
       "description": "Border handling policy."
     },
     {
-      "name": "sigma_x",
-      "token": "@sigma_x",
+      "name": "sigma",
+      "token": "@sigma",
       "type": "number",
-      "required": true,
-      "description": "Gaussian sigma in X direction."
-    },
-    {
-      "name": "sigma_y",
-      "token": "@sigma_y",
-      "type": "number",
-      "required": true,
-      "description": "Gaussian sigma in Y direction."
+      "description": "Gaussian sigma."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -53,5 +44,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/gaussian_filter.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

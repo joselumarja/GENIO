@@ -8,29 +8,28 @@
       "name": "retrieval_mode",
       "token": "@RETRIEVAL_MODE",
       "type": "enum",
-      "required": true,
       "description": "Contour retrieval mode."
     },
     {
       "name": "approximation_method",
       "token": "@APPROXIMATION_METHOD",
       "type": "enum",
-      "required": true,
       "description": "Contour approximation method."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "array"
+        "format": "array",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -39,5 +38,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/find_contours.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

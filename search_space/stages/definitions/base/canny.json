@@ -5,32 +5,31 @@
   "description": "Apply Canny edge detection.",
   "parameters": [
     {
-      "name": "threshold",
-      "token": "@threshold",
-      "type": "number",
-      "required": true,
-      "description": "Threshold value."
+      "name": "low_threshold",
+      "token": "@low_threshold",
+      "type": "integer",
+      "description": "Lower hysteresis threshold."
     },
     {
-      "name": "maxval",
-      "token": "@maxval",
-      "type": "number",
-      "required": true,
-      "description": "Maximum output value."
+      "name": "high_threshold",
+      "token": "@high_threshold",
+      "type": "integer",
+      "description": "Upper hysteresis threshold."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -39,5 +38,47 @@
     "functional": {
       "opencv": "implementations/functional/opencv/canny.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "filter_type",
+      "token": "@FILTER_TYPE",
+      "description": "HLS filter type selected by composer."
+    },
+    {
+      "name": "norm_type",
+      "token": "@NORM_TYPE",
+      "description": "HLS norm type selected by composer."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "out_npc",
+      "token": "@OUT_NPC",
+      "description": "Output pixels per cycle."
+    },
+    {
+      "name": "out_type",
+      "token": "@OUT_TYPE",
+      "description": "Output data type inferred from the stage and pipeline."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

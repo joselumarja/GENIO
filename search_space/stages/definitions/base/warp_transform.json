@@ -8,43 +8,34 @@
       "name": "interpolation",
       "token": "@INTERPOLATION",
       "type": "enum",
-      "required": true,
       "description": "Interpolation policy."
-    },
-    {
-      "name": "border_type",
-      "token": "@BORDER_TYPE",
-      "type": "enum",
-      "required": true,
-      "description": "Border handling policy."
     },
     {
       "name": "matrix",
       "token": "@matrix",
-      "type": "array",
-      "required": true,
-      "description": "Geometric transform matrix."
+      "type": "matrix",
+      "description": "Transformation/calibration matrix supplied as stage value."
     },
     {
       "name": "dsize",
       "token": "@dsize",
       "type": "array",
-      "required": true,
-      "description": "Output size."
+      "description": "Output size for functional warp implementation."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -53,5 +44,42 @@
     "functional": {
       "opencv": "implementations/functional/opencv/warp_transform.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "start_row",
+      "token": "@START_ROW",
+      "description": "Warp transform start row parameter."
+    },
+    {
+      "name": "store_lines",
+      "token": "@STORE_LINES",
+      "description": "Warp transform internal storage parameter."
+    },
+    {
+      "name": "transform",
+      "token": "@TRANSFORM",
+      "description": "Warp transform mode selected by composer."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

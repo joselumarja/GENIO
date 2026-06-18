@@ -8,46 +8,30 @@
       "name": "interpolation",
       "token": "@INTERPOLATION",
       "type": "enum",
-      "required": true,
       "description": "Interpolation policy."
-    },
-    {
-      "name": "border_type",
-      "token": "@BORDER_TYPE",
-      "type": "enum",
-      "required": true,
-      "description": "Border handling policy."
-    },
-    {
-      "name": "map_x",
-      "token": "@map_x",
-      "type": "array",
-      "required": true,
-      "description": "X-coordinate remap matrix."
-    },
-    {
-      "name": "map_y",
-      "token": "@map_y",
-      "type": "array",
-      "required": true,
-      "description": "Y-coordinate remap matrix."
     }
   ],
   "interface": {
     "inputs": [
       {
+        "format": "image",
+        "token": "@input_0"
+      },
+      {
+        "token": "@input_1",
         "format": "image"
       },
       {
-        "format": "map"
+        "token": "@input_2",
+        "format": "image"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -56,5 +40,42 @@
     "functional": {
       "opencv": "implementations/functional/opencv/remap.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "map_type",
+      "token": "@MAP_TYPE",
+      "description": "Map data type inferred by the composer."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "out_type",
+      "token": "@OUT_TYPE",
+      "description": "Output data type inferred from the stage and pipeline."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    },
+    {
+      "name": "win_rows",
+      "token": "@WIN_ROWS",
+      "description": "Window rows required by remap composer."
+    }
+  ]
 }

@@ -1,0 +1,60 @@
+{
+  "id": "color_threshold_pipeline",
+  "description": "Example search space for color conversion and range thresholding.",
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "bgr_to_hsv"
+        },
+        {
+          "stage": "rgb_to_hsv"
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "in_range",
+          "parameters": {
+            "lower_0": {
+              "type": "integer_range",
+              "start": 0,
+              "stop": 60,
+              "step": 10
+            },
+            "lower_1": {
+              "type": "constant",
+              "value": 30
+            },
+            "lower_2": {
+              "type": "constant",
+              "value": 30
+            },
+            "upper_0": {
+              "type": "integer_range",
+              "start": 20,
+              "stop": 80,
+              "step": 10
+            },
+            "upper_1": {
+              "type": "constant",
+              "value": 255
+            },
+            "upper_2": {
+              "type": "constant",
+              "value": 255
+            }
+          },
+          "constraints": [
+            "@lower_0 <= @upper_0",
+            "@lower_1 <= @upper_1",
+            "@lower_2 <= @upper_2"
+          ]
+        }
+      ]
+    }
+  ]
+}

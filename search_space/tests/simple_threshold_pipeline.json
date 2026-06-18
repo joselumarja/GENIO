@@ -1,0 +1,100 @@
+{
+  "id": "simple_threshold_pipeline",
+  "description": "Example search space for a grayscale thresholding pipeline.",
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "bgr_to_gray"
+        },
+        {
+          "stage": "rgb_to_gray"
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "threshold",
+          "parameters": {
+            "threshold": {
+              "type": "integer_range",
+              "start": 40,
+              "stop": 220,
+              "step": 20
+            },
+            "maxval": {
+              "type": "constant",
+              "value": 255
+            },
+            "threshold_type": {
+              "type": "choice",
+              "values": [
+                "binary",
+                "binary_inv"
+              ]
+            }
+          }
+        },
+        {
+          "stage": "otsu_threshold",
+          "parameters": {
+            "maxval": {
+              "type": "constant",
+              "value": 255
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 2,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "choice",
+              "values": [
+                "rect",
+                "ellipse",
+                "cross"
+              ]
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [
+                3,
+                5,
+                7
+              ]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [
+                3,
+                5,
+                7
+              ]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          },
+          "constraints": [
+            "@kernel_rows == @kernel_cols"
+          ]
+        }
+      ]
+    }
+  ]
+}

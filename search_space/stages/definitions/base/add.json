@@ -7,18 +7,20 @@
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       },
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_1"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -27,5 +29,47 @@
     "functional": {
       "opencv": "implementations/functional/opencv/add.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    },
+    {
+      "name": "policy_type",
+      "token": "@POLICY_TYPE",
+      "description": "Conversion policy for xf::cv::add, e.g. XF_CONVERT_POLICY_SATURATE or XF_CONVERT_POLICY_TRUNCATE."
+    },
+    {
+      "name": "xfcvdepth_in_1",
+      "token": "@XFCVDEPTH_IN_1",
+      "description": "Internal Vitis Vision depth for first input."
+    },
+    {
+      "name": "xfcvdepth_in_2",
+      "token": "@XFCVDEPTH_IN_2",
+      "description": "Internal Vitis Vision depth for second input."
+    },
+    {
+      "name": "xfcvdepth_out_1",
+      "token": "@XFCVDEPTH_OUT_1",
+      "description": "Internal Vitis Vision depth for output."
+    }
+  ]
 }

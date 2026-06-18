@@ -1,0 +1,75 @@
+{
+  "id": "lut_and_model_pipeline",
+  "description": "Example search space using file and object references.",
+  "resources": {
+    "files": {
+      "default_lut": "assets/luts/default_lut.npy"
+    },
+    "objects": {
+      "svm_model": "models/default_svm.pkl"
+    }
+  },
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "lut",
+          "wrapper_inputs": {
+            "lut": {
+              "type": "file_ref",
+              "id": "default_lut"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "histogram",
+          "parameters": {
+            "channel": {
+              "type": "constant",
+              "value": 0
+            },
+            "bins": {
+              "type": "choice",
+              "values": [
+                16,
+                32,
+                64
+              ]
+            },
+            "range_start": {
+              "type": "constant",
+              "value": 0
+            },
+            "range_end": {
+              "type": "constant",
+              "value": 256
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 2,
+      "candidates": [
+        {
+          "stage": "svm",
+          "wrapper_inputs": {
+            "model": {
+              "type": "object_ref",
+              "id": "svm_model"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -5,32 +5,25 @@
   "description": "Apply black level correction.",
   "parameters": [
     {
-      "name": "maxval",
-      "token": "@maxval",
-      "type": "number",
-      "required": true,
-      "description": "Maximum output value."
-    },
-    {
       "name": "black_level",
       "token": "@black_level",
       "type": "number",
-      "required": true,
       "description": "Black level offset."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -39,5 +32,57 @@
     "functional": {
       "numpy": "implementations/functional/numpy/black_level_correction.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    },
+    {
+      "name": "mul_value",
+      "token": "@MUL_VALUE",
+      "description": "Q16.16 gain value computed from black_level and image bit depth."
+    },
+    {
+      "name": "mul_value_width",
+      "token": "@MUL_VALUE_WIDTH",
+      "description": "Fixed-point width for black level multiplication value."
+    },
+    {
+      "name": "fl_pos",
+      "token": "@FL_POS",
+      "description": "Fractional bit position for black level multiplication value."
+    },
+    {
+      "name": "use_dsp",
+      "token": "@USE_DSP",
+      "description": "DSP usage flag for black level correction."
+    },
+    {
+      "name": "xfcvdepth_in",
+      "token": "@XFCVDEPTH_IN",
+      "description": "Internal Vitis Vision depth for input."
+    },
+    {
+      "name": "xfcvdepth_out",
+      "token": "@XFCVDEPTH_OUT",
+      "description": "Internal Vitis Vision depth for output."
+    }
+  ]
 }

@@ -5,32 +5,55 @@
   "description": "Check whether image pixels lie between lower and upper bounds.",
   "parameters": [
     {
-      "name": "lower_bound",
-      "token": "@lower_bound",
-      "type": "array",
-      "required": true,
-      "description": "Lower bound value or vector."
+      "name": "lower_0",
+      "token": "@lower_0",
+      "type": "integer",
+      "description": "Lower bound for channel 0."
     },
     {
-      "name": "upper_bound",
-      "token": "@upper_bound",
-      "type": "array",
-      "required": true,
-      "description": "Upper bound value or vector."
+      "name": "lower_1",
+      "token": "@lower_1",
+      "type": "integer",
+      "description": "Lower bound for channel 1."
+    },
+    {
+      "name": "lower_2",
+      "token": "@lower_2",
+      "type": "integer",
+      "description": "Lower bound for channel 2."
+    },
+    {
+      "name": "upper_0",
+      "token": "@upper_0",
+      "type": "integer",
+      "description": "Upper bound for channel 0."
+    },
+    {
+      "name": "upper_1",
+      "token": "@upper_1",
+      "type": "integer",
+      "description": "Upper bound for channel 1."
+    },
+    {
+      "name": "upper_2",
+      "token": "@upper_2",
+      "type": "integer",
+      "description": "Upper bound for channel 2."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -39,5 +62,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/in_range.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

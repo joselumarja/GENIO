@@ -1,0 +1,18 @@
+{
+  "stage": "canny_sobel",
+  "imports": [
+    "import cv2 as cv"
+  ],
+  "function": [
+    "ksize = 3",
+    "@output_0 = cv.Sobel(@input_0, cv.CV_16S, 1, 0, ksize=ksize)",
+    "@output_1 = cv.Sobel(@input_0, cv.CV_16S, 0, 1, ksize=ksize)"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@input_0": "Input image from the previous pipeline step.",
+    "@output_0": "Horizontal Sobel derivative output.",
+    "@output_1": "Vertical Sobel derivative output."
+  },
+  "source": "opencv"
+}

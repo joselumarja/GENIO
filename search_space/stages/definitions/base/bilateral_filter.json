@@ -5,46 +5,43 @@
   "description": "Apply edge-preserving bilateral filtering.",
   "parameters": [
     {
-      "name": "border_type",
-      "token": "@BORDER_TYPE",
-      "type": "enum",
-      "required": true,
-      "description": "Border handling policy."
-    },
-    {
       "name": "diameter",
       "token": "@diameter",
       "type": "integer",
-      "required": true,
-      "description": "Bilateral filter diameter."
+      "description": "Bilateral filter window diameter."
+    },
+    {
+      "name": "border_type",
+      "token": "@BORDER_TYPE",
+      "type": "enum",
+      "description": "Border handling policy."
     },
     {
       "name": "sigma_color",
       "token": "@sigma_color",
       "type": "number",
-      "required": true,
       "description": "Bilateral filter sigmaColor."
     },
     {
       "name": "sigma_space",
       "token": "@sigma_space",
       "type": "number",
-      "required": true,
       "description": "Bilateral filter sigmaSpace."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -53,5 +50,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/bilateral_filter.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

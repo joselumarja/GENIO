@@ -5,35 +5,29 @@
   "description": "Overlay or paint a mask on an image.",
   "parameters": [
     {
-      "name": "mask",
-      "token": "@mask",
-      "type": "image",
-      "required": true,
-      "description": "Mask image."
-    },
-    {
       "name": "color",
       "token": "@color",
       "type": "array",
-      "required": true,
       "description": "Color value."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       },
       {
+        "token": "@input_1",
         "format": "image"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -42,5 +36,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/paint_mask.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

@@ -8,50 +8,46 @@
       "name": "border_type",
       "token": "@BORDER_TYPE",
       "type": "enum",
-      "required": true,
       "description": "Border handling policy."
     },
     {
       "name": "top",
       "token": "@top",
       "type": "integer",
-      "required": true,
       "description": "Top border size."
     },
     {
       "name": "bottom",
       "token": "@bottom",
       "type": "integer",
-      "required": true,
       "description": "Bottom border size."
     },
     {
       "name": "left",
       "token": "@left",
       "type": "integer",
-      "required": true,
       "description": "Left border size."
     },
     {
       "name": "right",
       "token": "@right",
       "type": "integer",
-      "required": true,
       "description": "Right border size."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -60,5 +56,27 @@
     "functional": {
       "opencv": "implementations/functional/opencv/insert_border.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

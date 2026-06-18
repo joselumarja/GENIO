@@ -8,36 +8,44 @@
       "name": "threshold",
       "token": "@threshold",
       "type": "number",
-      "required": true,
       "description": "Threshold value."
     },
     {
       "name": "rho",
-      "token": "@rho",
+      "token": "@RHO",
       "type": "number",
-      "required": true,
       "description": "Distance resolution for Hough transform."
     },
     {
       "name": "theta",
-      "token": "@theta",
+      "token": "@THETA",
       "type": "number",
-      "required": true,
       "description": "Angle resolution for Hough transform."
+    },
+    {
+      "name": "linesmax",
+      "token": "@linesmax",
+      "type": "integer",
+      "description": "Maximum number of lines to return."
     }
   ],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "array"
+        "format": "array",
+        "token": "@output_0"
+      },
+      {
+        "format": "array",
+        "token": "@output_1"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -46,5 +54,47 @@
     "functional": {
       "opencv": "implementations/functional/opencv/hough_lines.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "diag",
+      "token": "@DIAG",
+      "description": "Image diagonal derived by composer."
+    },
+    {
+      "name": "max_lines",
+      "token": "@MAXLINES",
+      "description": "Maximum Hough lines storage selected by composer."
+    },
+    {
+      "name": "max_theta",
+      "token": "@MAXTHETA",
+      "description": "Maximum theta selected by composer."
+    },
+    {
+      "name": "min_theta",
+      "token": "@MINTHETA",
+      "description": "Minimum theta selected by composer."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

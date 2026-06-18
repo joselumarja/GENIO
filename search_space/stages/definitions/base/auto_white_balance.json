@@ -3,27 +3,20 @@
   "name": "Auto White Balance",
   "category": "isp",
   "description": "Apply automatic white balance.",
-  "parameters": [
-    {
-      "name": "maxval",
-      "token": "@maxval",
-      "type": "number",
-      "required": true,
-      "description": "Maximum output value."
-    }
-  ],
+  "parameters": [],
   "interface": {
     "inputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@input_0"
       }
     ],
     "outputs": [
       {
-        "format": "image"
+        "format": "image",
+        "token": "@output_0"
       }
-    ],
-    "compatibility": "An output can feed another stage input when format, and any declared dtype/channels constraints, are compatible."
+    ]
   },
   "implementations": {
     "hls": {
@@ -32,5 +25,27 @@
     "functional": {
       "numpy": "implementations/functional/numpy/auto_white_balance.json"
     }
-  }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
 }

@@ -1,0 +1,83 @@
+{
+  "id": "resize_filter_pipeline",
+  "description": "Example search space for resizing followed by optional smoothing.",
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_rows": {
+              "type": "choice",
+              "values": [
+                240,
+                480,
+                720
+              ]
+            },
+            "out_cols": {
+              "type": "choice",
+              "values": [
+                320,
+                640,
+                1280
+              ]
+            },
+            "interpolation": {
+              "type": "choice",
+              "values": [
+                "nearest",
+                "linear",
+                "area"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "gaussian_filter",
+          "parameters": {
+            "filter_width": {
+              "type": "choice",
+              "values": [
+                3,
+                5,
+                7
+              ]
+            },
+            "border_type": {
+              "type": "constant",
+              "value": "replicate"
+            },
+            "sigma": {
+              "type": "number_range",
+              "start": 0.5,
+              "stop": 2.0,
+              "step": 0.5
+            }
+          }
+        },
+        {
+          "stage": "median_blur",
+          "parameters": {
+            "filter_width": {
+              "type": "choice",
+              "values": [
+                3,
+                5
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

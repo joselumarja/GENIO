@@ -1,0 +1,36 @@
+{
+  "id": "geometric_transform_pipeline",
+  "description": "Example search space for matrix-based geometric transforms.",
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "warp_transform",
+          "parameters": {
+            "interpolation": {
+              "type": "choice",
+              "values": [
+                "nearest",
+                "linear"
+              ]
+            }
+          }
+        },
+        {
+          "stage": "flip",
+          "parameters": {
+            "flip_code": {
+              "type": "choice",
+              "values": [
+                0,
+                1,
+                -1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

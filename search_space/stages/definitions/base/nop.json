@@ -1,0 +1,23 @@
+{
+  "id": "nop",
+  "name": "No Operation",
+  "category": "pipeline_control",
+  "description": "Forward input data unchanged without applying any operation.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "any",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "same_as_input",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {},
+  "composer_resolved": []
+}
