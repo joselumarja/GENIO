@@ -38,8 +38,7 @@ Un archivo de configuración tiene esta forma:
       "candidates": [
         {
           "stage": "in_range",
-          "parameters": {},
-          "constraints": []
+          "parameters": {}
         }
       ]
     }
@@ -178,8 +177,7 @@ Forma completa:
 {
   "stage": "in_range",
   "parameters": {},
-  "wrapper_inputs": {},
-  "constraints": []
+  "wrapper_inputs": {}
 }
 ```
 
@@ -190,7 +188,6 @@ Campos:
 | `stage` | Sí | `id` de una definition existente. |
 | `parameters` | No | Configuración de valores para `definitions.parameters`. |
 | `wrapper_inputs` | No | Recursos o valores cargados por wrapper/composer. |
-| `constraints` | No | Restricciones entre parámetros. |
 
 ---
 
@@ -410,7 +407,7 @@ La implementación puede reconstruir localmente la estructura que necesita la li
 ranges = [@range_start, @range_end]
 ```
 
-Esta regla mantiene visible cada componente y permite aplicar constraints sobre ellos si hace falta.
+Esta regla mantiene visible cada componente y permite que las restricciones generales de la etapa se declaren en su definition.
 
 ---
 
@@ -477,78 +474,6 @@ Campos:
 | Campo | Significado |
 |---|---|
 | `id` | Clave existente en `resources.objects`. |
-
----
-
-# 11. Campo `constraints`
-
-Las restricciones son una lista de strings.
-
-Ejemplo:
-
-```json
-"constraints": [
-  "@lower_0 <= @upper_0",
-  "@lower_1 <= @upper_1",
-  "@lower_2 <= @upper_2"
-]
-```
-
-Otro ejemplo:
-
-```json
-"constraints": [
-  "@kernel_rows == @kernel_cols"
-]
-```
-
-Las constraints usan tokens, no nombres.
-
-Esto significa:
-
-```text
-parameters usa name:      kernel_rows
-constraints usa token:    @kernel_rows o @K_ROWS, según definition.parameters[*].token
-implementation usa token: @kernel_rows o @K_ROWS
-```
-
-## 11.1 Lenguaje de restricciones
-
-El formato actual admite expresiones booleanas como strings. El lenguaje debe mantenerse limitado.
-
-Operadores permitidos recomendados:
-
-```text
-+, -, *, /, %, ==, !=, <, <=, >, >=, and, or, not, in
-```
-
-No debe permitirse Python arbitrario ni llamadas libres a funciones.
-
-## 11.2 Parámetros independientes y constraints
-
-Cada parámetro configurable se declara de manera individual. Las combinaciones inválidas se filtran con `constraints`.
-
-Ejemplo:
-
-```json
-"parameters": {
-  "lower_0": {
-    "type": "integer_range",
-    "start": 0,
-    "stop": 60,
-    "step": 10
-  },
-  "upper_0": {
-    "type": "integer_range",
-    "start": 20,
-    "stop": 80,
-    "step": 10
-  }
-},
-"constraints": [
-  "@lower_0 <= @upper_0"
-]
-```
 
 ---
 
@@ -642,10 +567,7 @@ wrapper_inputs
               "stop": 80,
               "step": 10
             }
-          },
-          "constraints": [
-            "@lower_0 <= @upper_0"
-          ]
+          }
         }
       ]
     }
@@ -665,12 +587,10 @@ Para cada archivo de configuración:
 4. Cada candidate debe tener `stage`.
 5. `stage` debe existir como `definition.id`.
 6. Cada clave de `candidate.parameters` debe existir como `definition.parameters[*].name`.
-7. Cada constraint debe ser string.
-8. Cada token usado en constraints debe corresponder a un token de parámetro de la etapa candidata.
-9. Los `file_ref` deben apuntar a claves existentes en `resources.files`.
-10. Los `object_ref` deben apuntar a claves existentes en `resources.objects`.
-11. `wrapper_inputs` no debe confundirse con `interface.inputs`.
-12. Si un candidato es `nop`, no necesita `parameters`, `constraints` ni `wrapper_inputs`.
+7. Los `file_ref` deben apuntar a claves existentes en `resources.files`.
+8. Los `object_ref` deben apuntar a claves existentes en `resources.objects`.
+9. `wrapper_inputs` no debe confundirse con `interface.inputs`.
+10. Si un candidato es `nop`, no necesita `parameters` ni `wrapper_inputs`.
 
 ---
 
@@ -682,7 +602,6 @@ Estos archivos responden a:
 ¿Qué pipeline o familia de pipelines se quiere explorar?
 ¿Qué etapas puede ocupar cada slot?
 ¿Qué valores puede tomar cada parámetro?
-¿Qué restricciones filtran combinaciones inválidas?
 ¿Qué recursos externos necesita el wrapper/composer?
 ```
 

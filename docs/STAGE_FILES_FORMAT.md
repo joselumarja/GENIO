@@ -55,6 +55,7 @@ name
 category
 description
 parameters
+constraints
 interface
 implementations
 composer_resolved
@@ -251,7 +252,44 @@ Tipos conceptuales frecuentes:
 
 ---
 
-## 2.7 `interface`
+## 2.7 `constraints`
+
+Lista de expresiones booleanas que forman parte del contrato general de validez de la etapa.
+
+Ejemplo:
+
+```json
+"constraints": [
+  "@lower_0 <= @upper_0",
+  "@lower_1 <= @upper_1",
+  "@lower_2 <= @upper_2"
+]
+```
+
+Las constraints se declaran en la definición porque expresan restricciones propias de la etapa, no de un escenario concreto de búsqueda.
+
+Reglas actuales:
+
+- son una lista de strings;
+- usan tokens, no nombres de parámetros;
+- los tokens deben corresponder a `parameters` de la misma definición;
+- no deben referirse a `@input_N`, `@output_N` ni a `composer_resolved` salvo que se formalice una necesidad concreta.
+
+Ejemplos actuales:
+
+```text
+in_range:
+  @lower_0 <= @upper_0
+  @lower_1 <= @upper_1
+  @lower_2 <= @upper_2
+
+erode:
+  @K_ROWS == @K_COLS
+```
+
+---
+
+## 2.8 `interface`
 
 Declara entradas y salidas de datos reales de la etapa.
 
@@ -322,7 +360,7 @@ Formatos usados o esperados:
 
 ---
 
-## 2.8 `implementations`
+## 2.9 `implementations`
 
 Mapa de implementaciones disponibles.
 
@@ -358,7 +396,7 @@ vitis_vision
 
 ---
 
-## 2.9 `composer_resolved`
+## 2.10 `composer_resolved`
 
 Valores que no configura el archivo de valores/test, sino el orquestador/composer.
 
@@ -398,7 +436,7 @@ Estos tokens pueden depender de:
 
 ---
 
-## 2.10 `nop`
+## 2.11 `nop`
 
 `nop` representa ausencia de operación.
 
@@ -710,16 +748,7 @@ Ejemplos:
 }
 ```
 
-No se usa configuración `derived`. Cada parámetro configurable debe declararse explícitamente. Las combinaciones inválidas se expresan con `constraints`.
-
-```json
-"constraints": [
-  "@lower_0 <= @upper_0",
-  "@kernel_rows == @kernel_cols"
-]
-```
-
-Las constraints usan tokens; el bloque `parameters` del test usa nombres.
+Cada parámetro configurable en tests debe declararse explícitamente con su propio espacio de valores. Las constraints generales pertenecen a las definiciones de stages.
 
 ---
 

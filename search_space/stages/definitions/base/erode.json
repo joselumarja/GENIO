@@ -82,5 +82,8 @@
       "token": "@BORDER_TYPE",
       "description": "Border handling selected by composer/wrapper."
     }
+  ],
+  "constraints": [
+    "@K_ROWS == @K_COLS"
   ]
 }

@@ -89,10 +89,7 @@
               "type": "constant",
               "value": 1
             }
-          },
-          "constraints": [
-            "@kernel_rows == @kernel_cols"
-          ]
+          }
         }
       ]
     }

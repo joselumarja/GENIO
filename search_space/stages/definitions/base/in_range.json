@@ -84,5 +84,10 @@
       "token": "@TYPE",
       "description": "Vitis Vision data type inferred from the pipeline."
     }
+  ],
+  "constraints": [
+    "@lower_0 <= @upper_0",
+    "@lower_1 <= @upper_1",
+    "@lower_2 <= @upper_2"
   ]
 }
