@@ -1,5 +1,6 @@
 .kilo
 .pytest_cache
+.vscode
 proyecto_heredado
 Vitis_Libraries
 *__pycache__

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from genio import (
     Candidate,
     Evaluator,
@@ -58,7 +60,7 @@ def test_individual_keeps_concrete_stage_choices():
 
 
 def test_search_space_maps_genotype_to_individual_and_index():
-    search_space = SearchSpace(
+    search_space = SearchSpace.from_scenario(
         SearchScenarioSpec(
             id="simple_threshold_pipeline",
             slots=(
@@ -92,7 +94,7 @@ def test_search_space_maps_genotype_to_individual_and_index():
     individual = search_space.from_genotype((1, 2), id="individual_001")
 
     assert search_space.slot_lengths == (2, 3)
-    assert search_space.cardinality == 6
+    assert search_space.search_space_size == 6
     assert individual.scenario == "simple_threshold_pipeline"
     assert individual.genotype == (1, 2)
     assert individual.search_index == 5
@@ -103,7 +105,7 @@ def test_search_space_maps_genotype_to_individual_and_index():
 
 
 def test_search_space_rebuilds_individual_from_slots():
-    search_space = SearchSpace(
+    search_space = SearchSpace.from_scenario(
         SearchScenarioSpec(
             id="two_slot_space",
             slots=(
@@ -136,3 +138,20 @@ def test_search_space_rebuilds_individual_from_slots():
     assert individual.genotype == (1, 0)
     assert individual.search_index == 2
     assert search_space.from_index(2, id="decoded").genotype == (1, 0)
+
+
+def test_search_space_loads_real_test_file():
+    root = Path(__file__).resolve().parents[1]
+    search_space = SearchSpace(
+        root / "search_space/tests/simple_threshold_pipeline.json",
+        root / "search_space/stages/definitions",
+    )
+
+    assert search_space.scenario_id == "simple_threshold_pipeline"
+    assert search_space.slot_lengths == (3, 19, 10)
+    assert search_space.search_space_size == 570
+
+    individual = search_space.from_genotype((1, 18, 0), id="loaded_001")
+
+    assert individual.stage_sequence() == ("bgr_to_gray", "otsu_threshold", "nop")
+    assert individual.search_index == search_space.genotype_to_index((1, 18, 0))

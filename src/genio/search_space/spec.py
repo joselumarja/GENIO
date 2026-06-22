@@ -20,5 +20,4 @@ class SearchScenarioSpec:
 
     id: str
     slots: tuple[SlotSpec, ...]
-    version: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

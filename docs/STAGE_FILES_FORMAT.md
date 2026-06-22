@@ -275,6 +275,356 @@ Reglas actuales:
 - los tokens deben corresponder a `parameters` de la misma definición;
 - no deben referirse a `@input_N`, `@output_N` ni a `composer_resolved` salvo que se formalice una necesidad concreta.
 
+### 2.7.1 Cuándo se aplican
+
+`SearchSpace` aplica estas constraints al generar las alternativas concretas de cada slot. Para cada candidate del archivo de test, se expanden las combinaciones de parámetros y solo se añaden a la lista de alternativas aquellas que cumplen todas las constraints declaradas en la definition de la stage.
+
+Por ejemplo, si un test define:
+
+```json
+"kernel_rows": {
+  "type": "choice",
+  "values": [3, 5, 7]
+},
+"kernel_cols": {
+  "type": "choice",
+  "values": [3, 5, 7]
+}
+```
+
+y la definition contiene:
+
+```json
+"constraints": [
+  "@K_ROWS == @K_COLS"
+]
+```
+
+entonces se descartan combinaciones como:
+
+```text
+kernel_rows = 3, kernel_cols = 5
+kernel_rows = 5, kernel_cols = 7
+```
+
+y solo quedan alternativas válidas como:
+
+```text
+kernel_rows = 3, kernel_cols = 3
+kernel_rows = 5, kernel_cols = 5
+kernel_rows = 7, kernel_cols = 7
+```
+
+Esto significa que el espacio de búsqueda construido por `SearchSpace` contiene únicamente alternativas válidas a nivel local de stage.
+
+### 2.7.2 Tokens permitidos
+
+Las constraints se escriben usando los tokens definidos en `parameters`.
+
+Ejemplo:
+
+```json
+"parameters": [
+  {
+    "name": "kernel_rows",
+    "token": "@K_ROWS",
+    "type": "integer"
+  },
+  {
+    "name": "kernel_cols",
+    "token": "@K_COLS",
+    "type": "integer"
+  }
+],
+"constraints": [
+  "@K_ROWS == @K_COLS"
+]
+```
+
+La constraint usa:
+
+```text
+@K_ROWS
+@K_COLS
+```
+
+no:
+
+```text
+kernel_rows
+kernel_cols
+```
+
+Durante la expansión del espacio de búsqueda, `SearchSpace` sustituye cada token por el valor concreto de la combinación que está evaluando.
+
+### 2.7.3 Comparaciones soportadas
+
+Se soportan comparaciones básicas:
+
+| Operador | Significado | Ejemplo |
+|---|---|---|
+| `==` | Igualdad | `@K_ROWS == @K_COLS` |
+| `!=` | Desigualdad | `@mode != "disabled"` |
+| `<` | Menor que | `@min_value < @max_value` |
+| `<=` | Menor o igual | `@lower_0 <= @upper_0` |
+| `>` | Mayor que | `@iterations > 0` |
+| `>=` | Mayor o igual | `@threshold >= 0` |
+
+Ejemplos válidos:
+
+```text
+@K_ROWS == @K_COLS
+@lower_0 <= @upper_0
+@iterations > 0
+@mode != "unsupported"
+```
+
+También se soportan comparaciones encadenadas:
+
+```text
+@min_value <= @value <= @max_value
+```
+
+Aunque los límites absolutos suelen expresarse en los archivos de test mediante rangos, las comparaciones encadenadas pueden ser útiles cuando el límite depende de otros parámetros variables.
+
+### 2.7.4 Operadores booleanos
+
+Se soportan combinaciones con:
+
+```text
+and
+or
+```
+
+Ejemplos:
+
+```text
+@K_ROWS == @K_COLS and @iterations > 0
+@mode == "nearest" or @mode == "linear"
+```
+
+Para expresiones complejas, se recomienda usar paréntesis para hacer explícita la intención:
+
+```text
+(@mode == "nearest" or @mode == "linear") and @scale > 0
+```
+
+### 2.7.5 Aritmética soportada
+
+Se soportan operaciones aritméticas simples:
+
+| Operador | Significado | Ejemplo |
+|---|---|---|
+| `+` | Suma | `@x + @width <= @max_width` |
+| `-` | Resta | `abs(@a - @b) <= 2` |
+| `*` | Multiplicación | `@rows * @cols <= 921600` |
+| `/` | División | `@width / @scale >= 1` |
+| `%` | Módulo | `@K_ROWS % 2 == 1` |
+
+También se soportan números negativos mediante signo unario:
+
+```text
+@offset >= -10
+```
+
+Ejemplos válidos:
+
+```text
+@OUT_ROWS * @OUT_COLS <= 921600
+@K_ROWS % 2 == 1
+@x + @width <= @image_width
+```
+
+### 2.7.6 Pertenencia
+
+Se soportan expresiones de pertenencia con:
+
+```text
+in
+not in
+```
+
+Y literales de colección:
+
+```text
+listas
+tuplas
+sets
+```
+
+Ejemplos válidos:
+
+```text
+@mode in ["nearest", "linear", "area"]
+@mode not in ("unsupported", "disabled")
+@K_ROWS in {3, 5, 7}
+```
+
+Esto permite expresar constraints compactas para modos discretos o valores permitidos dependientes de la stage.
+
+Ejemplo en JSON:
+
+```json
+"constraints": [
+  "@INTERPOLATION in [\"nearest\", \"linear\", \"area\"]"
+]
+```
+
+Si los valores permitidos son simples y no dependen de otros parámetros, normalmente es mejor expresarlos en el archivo de test con `type: "choice"`. La pertenencia es más útil cuando la restricción depende de la definition o combina varios parámetros.
+
+### 2.7.7 Literales soportados
+
+Se soportan literales simples:
+
+```text
+enteros
+floats
+strings
+booleans
+None
+```
+
+Ejemplos:
+
+```text
+@threshold >= 0
+@sigma <= 2.5
+@mode == "binary"
+@enabled == True
+```
+
+También se soportan colecciones literales para pertenencia:
+
+```text
+["nearest", "linear"]
+("nearest", "linear")
+{"nearest", "linear"}
+```
+
+### 2.7.8 Funciones matemáticas seguras
+
+Se permiten llamadas directas únicamente a funciones incluidas en una whitelist. No se permite ejecutar Python arbitrario.
+
+Funciones matemáticas soportadas:
+
+| Función | Significado | Ejemplo |
+|---|---|---|
+| `abs(x)` | Valor absoluto | `abs(@a - @b) <= 2` |
+| `min(a, b, ...)` | Mínimo | `min(@rows, @cols) >= 128` |
+| `max(a, b, ...)` | Máximo | `max(@rows, @cols) <= 1920` |
+| `round(x)` | Redondeo Python estándar | `round(@scale) == 2` |
+
+Ejemplos válidos:
+
+```text
+abs(@target - @actual) <= 4
+min(@OUT_ROWS, @OUT_COLS) >= 128
+max(@OUT_ROWS, @OUT_COLS) <= 1920
+round(@scale) == @scale
+```
+
+### 2.7.9 Funciones específicas de dominio
+
+Además de las funciones matemáticas básicas, se soportan funciones de dominio para hacer las constraints más expresivas.
+
+| Función | Significado | Ejemplo |
+|---|---|---|
+| `is_odd(x)` | `True` si `x` es impar. | `is_odd(@K_ROWS)` |
+| `is_even(x)` | `True` si `x` es par. | `is_even(@OUT_COLS)` |
+| `is_power_of_two(x)` | `True` si `x` es potencia de dos positiva. | `is_power_of_two(@NPC)` |
+| `divisible_by(x, divisor)` | `True` si `x` es divisible por `divisor`. Si `divisor` es `0`, devuelve `False`. | `divisible_by(@OUT_COLS, 8)` |
+| `square(rows, cols)` | `True` si `rows == cols`. | `square(@K_ROWS, @K_COLS)` |
+
+Ejemplos válidos:
+
+```text
+is_odd(@K_ROWS)
+is_odd(@K_COLS)
+square(@K_ROWS, @K_COLS)
+divisible_by(@OUT_COLS, 8)
+is_power_of_two(@NPC)
+```
+
+La constraint actual de `erode` puede escribirse de estas dos formas equivalentes:
+
+```text
+@K_ROWS == @K_COLS
+square(@K_ROWS, @K_COLS)
+```
+
+Para kernels que deban ser cuadrados e impares, podría usarse:
+
+```text
+square(@K_ROWS, @K_COLS) and is_odd(@K_ROWS)
+```
+
+### 2.7.10 Sintaxis no soportada
+
+El evaluador de constraints es intencionadamente limitado. No se soporta Python completo.
+
+No están permitidos:
+
+```text
+imports
+acceso a atributos
+llamadas a métodos
+indexación
+lambdas
+comprensiones
+asignaciones
+funciones no incluidas en la whitelist
+argumentos por keyword
+```
+
+Ejemplos no válidos:
+
+```text
+__import__("os").system("...")
+@mode.lower() == "linear"
+@shape[0] == @shape[1]
+[x for x in values]
+lambda x: x > 0
+sum([@a, @b]) == 3
+within(@value, 0, 10)
+```
+
+`within(...)` no está soportada actualmente. Si se necesita, debería añadirse explícitamente a la whitelist y documentarse en esta sección.
+
+### 2.7.11 Recomendaciones de uso
+
+Usar `constraints` para reglas generales de validez de la stage:
+
+```text
+kernel cuadrado
+límites inferiores no mayores que límites superiores
+alineamientos requeridos
+relaciones entre parámetros
+modos incompatibles
+```
+
+No usar `constraints` para reducir manualmente un espacio que ya puede expresarse mejor en el archivo de test. Por ejemplo, si un parámetro solo puede tomar tres valores independientes, preferir:
+
+```json
+"type": "choice",
+"values": [3, 5, 7]
+```
+
+en vez de:
+
+```text
+@K_ROWS in [3, 5, 7]
+```
+
+Usar `constraints` cuando la validez depende de la relación entre dos o más parámetros:
+
+```text
+@lower_0 <= @upper_0
+square(@K_ROWS, @K_COLS)
+divisible_by(@OUT_COLS, @TILE_COLS)
+```
+
+No hacer que las constraints dependan de detalles de implementación concreta si la regla no pertenece al contrato conceptual de la stage. Las restricciones específicas de backend deberían resolverse posteriormente en el composer o en validadores de backend.
+
 Ejemplos actuales:
 
 ```text
