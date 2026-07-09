@@ -1,6 +1,8 @@
 {
   "stage": "custom_bgr_to_y8",
-  "include": "imgproc/xf_custom_bgr2y8.hpp",
+  "include": [
+    "imgproc/xf_custom_bgr2y8.hpp"
+  ],
   "function": [
     "xf::cv::bgr2y8<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

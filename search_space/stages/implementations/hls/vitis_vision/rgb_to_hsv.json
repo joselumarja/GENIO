@@ -1,6 +1,8 @@
 {
   "stage": "rgb_to_hsv",
-  "include": "imgproc/xf_rgb2hsv.hpp",
+  "include": [
+    "imgproc/xf_rgb2hsv.hpp"
+  ],
   "function": [
     "xf::cv::rgb2hsv<XF_8UC3, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

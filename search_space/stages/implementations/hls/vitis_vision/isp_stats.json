@@ -1,6 +1,8 @@
 {
   "stage": "isp_stats",
-  "include": "imgproc/xf_ispstats.hpp",
+  "include": [
+    "imgproc/xf_ispstats.hpp"
+  ],
   "function": [
     "xf::cv::IspStats<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "warp_transform",
-  "include": "imgproc/xf_warp_transform.hpp",
+  "include": [
+    "imgproc/xf_warp_transform.hpp"
+  ],
   "function": [
     "xf::cv::warpTransform<@STORE_LINES, @START_ROW, @TRANSFORM, @INTERPOLATION, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @matrix);"
   ],

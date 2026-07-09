@@ -1,6 +1,8 @@
 {
   "stage": "reduce",
-  "include": "imgproc/xf_reduce.hpp",
+  "include": [
+    "imgproc/xf_reduce.hpp"
+  ],
   "function": [
     "xf::cv::reduce<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

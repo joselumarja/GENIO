@@ -1,0 +1,34 @@
+{
+  "id": "area_filter",
+  "name": "Area Filter",
+  "category": "segmentation",
+  "description": "Filter connected components by area threshold.",
+  "parameters": [
+    {
+      "name": "min_area",
+      "token": "@MIN_AREA",
+      "type": "integer",
+      "description": "Minimum component area to keep."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image",
+        "token": "@input_0"
+      },
+      {
+        "format": "components",
+        "token": "@input_1"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {},
+  "composer_resolved": []
+}

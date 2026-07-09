@@ -1,6 +1,8 @@
 {
   "stage": "connected_components",
-  "include": "imgproc/xf_cca_custom.hpp",
+  "include": [
+    "imgproc/xf_cca_custom.hpp"
+  ],
   "function": [
     "xf::cv::connectedComponents<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "local_tone_mapping",
-  "include": "imgproc/xf_ltm.hpp",
+  "include": [
+    "imgproc/xf_ltm.hpp"
+  ],
   "function": [
     "xf::cv::LTM<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

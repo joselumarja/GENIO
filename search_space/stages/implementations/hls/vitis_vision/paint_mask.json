@@ -1,6 +1,8 @@
 {
   "stage": "paint_mask",
-  "include": "imgproc/xf_paintmask.hpp",
+  "include": [
+    "imgproc/xf_paintmask.hpp"
+  ],
   "function": [
     "xf::cv::paintmask<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

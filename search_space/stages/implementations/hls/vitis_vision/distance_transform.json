@@ -1,6 +1,8 @@
 {
   "stage": "distance_transform",
-  "include": "imgproc/xf_distancetransform.hpp",
+  "include": [
+    "imgproc/xf_distancetransform.hpp"
+  ],
   "function": [
     "xf::cv::distanceTransform<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

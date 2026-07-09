@@ -1,6 +1,8 @@
 {
   "stage": "canny",
-  "include": "imgproc/xf_canny.hpp",
+  "include": [
+    "imgproc/xf_canny.hpp"
+  ],
   "function": [
     "xf::cv::Canny<@FILTER_TYPE, @NORM_TYPE, @TYPE, @OUT_TYPE, @ROWS, @COLS, @NPC, @OUT_NPC>(@input_0, @output_0, @low_threshold, @high_threshold);"
   ],

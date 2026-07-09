@@ -1,6 +1,8 @@
 {
   "stage": "reproject_3d",
-  "include": "imgproc/xf_reproject3D.hpp",
+  "include": [
+    "imgproc/xf_reproject3D.hpp"
+  ],
   "function": [
     "xf::cv::reprojectImageTo3D<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

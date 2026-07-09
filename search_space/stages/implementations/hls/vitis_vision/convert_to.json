@@ -1,6 +1,8 @@
 {
   "stage": "convert_to",
-  "include": "imgproc/xf_convertTo.hpp",
+  "include": [
+    "imgproc/xf_convertTo.hpp"
+  ],
   "function": [
     "xf::cv::convertTo<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

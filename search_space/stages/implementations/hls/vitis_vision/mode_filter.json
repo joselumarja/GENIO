@@ -1,6 +1,8 @@
 {
   "stage": "mode_filter",
-  "include": "imgproc/xf_modefilter.hpp",
+  "include": [
+    "imgproc/xf_modefilter.hpp"
+  ],
   "function": [
     "xf::cv::modefilter<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "color_convert_extended",
-  "include": "imgproc/xf_cvt_color_1.hpp",
+  "include": [
+    "imgproc/xf_cvt_color_1.hpp"
+  ],
   "function": [
     "xf::cv::cvtColor<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

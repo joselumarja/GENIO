@@ -1,6 +1,8 @@
 {
   "stage": "edge_tracing",
-  "include": "imgproc/xf_edge_tracing.hpp",
+  "include": [
+    "imgproc/xf_edge_tracing.hpp"
+  ],
   "function": [
     "xf::cv::EdgeTracing<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

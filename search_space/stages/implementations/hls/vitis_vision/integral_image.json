@@ -1,6 +1,8 @@
 {
   "stage": "integral_image",
-  "include": "imgproc/xf_integral_image.hpp",
+  "include": [
+    "imgproc/xf_integral_image.hpp"
+  ],
   "function": [
     "xf::cv::integral<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "insert_border",
-  "include": "dnn/xf_insertBorder.hpp",
+  "include": [
+    "dnn/xf_insertBorder.hpp"
+  ],
   "function": [
     "xf::cv::insertBorder<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

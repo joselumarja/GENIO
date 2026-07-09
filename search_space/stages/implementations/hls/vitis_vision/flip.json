@@ -1,6 +1,8 @@
 {
   "stage": "flip",
-  "include": "imgproc/xf_flip.hpp",
+  "include": [
+    "imgproc/xf_flip.hpp"
+  ],
   "function": [
     "xf::cv::flip<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @flip_code);"
   ],

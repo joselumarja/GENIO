@@ -1,6 +1,8 @@
 {
   "stage": "otsu_threshold",
-  "include": "imgproc/xf_otsuthreshold.hpp",
+  "include": [
+    "imgproc/xf_otsuthreshold.hpp"
+  ],
   "function": [
     "xf::cv::OtsuThreshold<@TYPE, @ROWS, @COLS, @NPC>(@input_0, threshold);"
   ],

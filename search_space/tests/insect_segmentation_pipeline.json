@@ -1,0 +1,1044 @@
+{
+  "id": "insect_segmentation_pipeline",
+  "description": "Search space for insect segmentation using resize, grayscale preprocessing, inverse thresholding, morphology, connected components and area filtering.",
+  "resources": {
+    "datasets": {
+      "images": "proyecto_heredado/SolutionSearcher/Images",
+      "masks": "proyecto_heredado/SolutionSearcher/Masks"
+    }
+  },
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 1920
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 1080
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 1280
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 720
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 640
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 480
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 850
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 480
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 1600
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 900
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 640
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 360
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "bgr_to_gray"
+        }
+      ]
+    },
+    {
+      "slot": 2,
+      "candidates": [
+        {
+          "stage": "hist_equalize"
+        }
+      ]
+    },
+    {
+      "slot": 3,
+      "candidates": [
+        {
+          "stage": "threshold",
+          "parameters": {
+            "threshold": {
+              "type": "integer_range",
+              "start": 0,
+              "stop": 50,
+              "step": 3
+            },
+            "maxval": {
+              "type": "constant",
+              "value": 255
+            },
+            "threshold_type": {
+              "type": "constant",
+              "value": "binary_inv"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 4,
+      "candidates": [
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 5,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 6,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 7,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 8,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 9,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 10,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 11,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "kernel_cols": {
+              "type": "integer_range",
+              "start": 3,
+              "stop": 8,
+              "step": 2
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 12,
+      "candidates": [
+        {
+          "stage": "connected_components"
+        }
+      ]
+    },
+    {
+      "slot": 13,
+      "candidates": [
+        {
+          "stage": "area_filter",
+          "parameters": {
+            "min_area": {
+              "type": "integer_range",
+              "start": 1,
+              "stop": 100,
+              "step": 2
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

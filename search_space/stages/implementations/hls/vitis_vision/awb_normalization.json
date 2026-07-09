@@ -1,6 +1,8 @@
 {
   "stage": "awb_normalization",
-  "include": "imgproc/xf_awb_norm.hpp",
+  "include": [
+    "imgproc/xf_awb_norm.hpp"
+  ],
   "function": [
     "xf::cv::AWBNormalization<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

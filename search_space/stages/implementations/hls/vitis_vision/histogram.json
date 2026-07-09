@@ -1,6 +1,8 @@
 {
   "stage": "histogram",
-  "include": "imgproc/xf_histogram.hpp",
+  "include": [
+    "imgproc/xf_histogram.hpp"
+  ],
   "function": [
     "xf::cv::calcHist<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

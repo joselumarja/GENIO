@@ -1,6 +1,8 @@
 {
   "stage": "de_gamma",
-  "include": "imgproc/xf_degamma.hpp",
+  "include": [
+    "imgproc/xf_degamma.hpp"
+  ],
   "function": [
     "xf::cv::degamma<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

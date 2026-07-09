@@ -1,6 +1,8 @@
 {
   "stage": "stereo_pipeline",
-  "include": "imgproc/xf_stereo_pipeline.hpp",
+  "include": [
+    "imgproc/xf_stereo_pipeline.hpp"
+  ],
   "function": [
     "xf::cv::stereoPipeline<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

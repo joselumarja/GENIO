@@ -1,6 +1,8 @@
 {
   "stage": "rgb_to_bgr",
-  "include": "imgproc/xf_cvt_color.hpp",
+  "include": [
+    "imgproc/xf_cvt_color.hpp"
+  ],
   "function": [
     "xf::cv::rgb2bgr<XF_8UC3, XF_8UC3, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

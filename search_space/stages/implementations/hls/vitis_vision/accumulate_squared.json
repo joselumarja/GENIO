@@ -1,6 +1,8 @@
 {
   "stage": "accumulate_squared",
-  "include": "imgproc/xf_accumulate_squared.hpp",
+  "include": [
+    "imgproc/xf_accumulate_squared.hpp"
+  ],
   "function": [
     "xf::cv::accumulateSquare<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "hdr_decompand",
-  "include": "imgproc/xf_hdrdecompand.hpp",
+  "include": [
+    "imgproc/xf_hdrdecompand.hpp"
+  ],
   "function": [
     "xf::cv::HdrDecompand<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

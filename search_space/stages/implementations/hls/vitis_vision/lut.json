@@ -1,6 +1,8 @@
 {
   "stage": "lut",
-  "include": "imgproc/xf_lut.hpp",
+  "include": [
+    "imgproc/xf_lut.hpp"
+  ],
   "function": [
     "xf::cv::LUT<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

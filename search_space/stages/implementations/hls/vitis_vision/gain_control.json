@@ -1,6 +1,8 @@
 {
   "stage": "gain_control",
-  "include": "imgproc/xf_gaincontrol.hpp",
+  "include": [
+    "imgproc/xf_gaincontrol.hpp"
+  ],
   "function": [
     "xf::cv::gaincontrol<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

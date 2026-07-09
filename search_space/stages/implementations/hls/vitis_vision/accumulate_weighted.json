@@ -1,6 +1,8 @@
 {
   "stage": "accumulate_weighted",
-  "include": "imgproc/xf_accumulate_weighted.hpp",
+  "include": [
+    "imgproc/xf_accumulate_weighted.hpp"
+  ],
   "function": [
     "xf::cv::accumulateWeighted<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @alpha);"
   ],

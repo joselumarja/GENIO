@@ -1,6 +1,8 @@
 {
   "stage": "sum",
-  "include": "imgproc/xf_sum.hpp",
+  "include": [
+    "imgproc/xf_sum.hpp"
+  ],
   "function": [
     "xf::cv::sum<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

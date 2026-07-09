@@ -1,6 +1,8 @@
 {
   "stage": "agc",
-  "include": "imgproc/xf_agc.hpp",
+  "include": [
+    "imgproc/xf_agc.hpp"
+  ],
   "function": [
     "xf::cv::auto_gain_control<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

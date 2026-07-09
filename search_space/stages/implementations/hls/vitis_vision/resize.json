@@ -1,6 +1,8 @@
 {
   "stage": "resize",
-  "include": "imgproc/xf_resize.hpp",
+  "include": [
+    "imgproc/xf_resize.hpp"
+  ],
   "function": [
     "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @USE_URAM, @MAXDOWNSCALE>(@input_0, @output_0);"
   ],

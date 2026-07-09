@@ -1,6 +1,8 @@
 {
   "stage": "convert_bitdepth",
-  "include": "core/xf_convert_bitdepth.hpp",
+  "include": [
+    "core/xf_convert_bitdepth.hpp"
+  ],
   "function": [
     "xf::cv::convertTo<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

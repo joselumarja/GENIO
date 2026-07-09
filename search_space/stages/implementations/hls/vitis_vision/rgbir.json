@@ -1,6 +1,8 @@
 {
   "stage": "rgbir",
-  "include": "imgproc/xf_rgbir.hpp",
+  "include": [
+    "imgproc/xf_rgbir.hpp"
+  ],
   "function": [
     "xf::cv::rgbir2bayer<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

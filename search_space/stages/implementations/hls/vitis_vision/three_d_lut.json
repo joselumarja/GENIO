@@ -1,6 +1,8 @@
 {
   "stage": "three_d_lut",
-  "include": "imgproc/xf_3dlut.hpp",
+  "include": [
+    "imgproc/xf_3dlut.hpp"
+  ],
   "function": [
     "xf::cv::lut3d<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

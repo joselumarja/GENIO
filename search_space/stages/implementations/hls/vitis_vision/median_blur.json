@@ -1,6 +1,8 @@
 {
   "stage": "median_blur",
-  "include": "imgproc/xf_median_blur.hpp",
+  "include": [
+    "imgproc/xf_median_blur.hpp"
+  ],
   "function": [
     "xf::cv::medianBlur<@FILTER_WIDTH, XF_BORDER_REPLICATE, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

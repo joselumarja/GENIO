@@ -1,6 +1,8 @@
 {
   "stage": "add_weighted",
-  "include": "imgproc/xf_add_weighted.hpp",
+  "include": [
+    "imgproc/xf_add_weighted.hpp"
+  ],
   "function": [
     "xf::cv::addWeighted<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @input_1, @output_0, @alpha, @beta, @gamma);"
   ],

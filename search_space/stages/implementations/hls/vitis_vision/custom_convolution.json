@@ -1,6 +1,8 @@
 {
   "stage": "custom_convolution",
-  "include": "imgproc/xf_custom_convolution.hpp",
+  "include": [
+    "imgproc/xf_custom_convolution.hpp"
+  ],
   "function": [
     "xf::cv::filter2D<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

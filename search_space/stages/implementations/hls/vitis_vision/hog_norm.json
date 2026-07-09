@@ -1,6 +1,8 @@
 {
   "stage": "hog_norm",
-  "include": "imgproc/xf_hog_descriptor_norm.hpp",
+  "include": [
+    "imgproc/xf_hog_descriptor_norm.hpp"
+  ],
   "function": [
     "xf::cv::HOGNorm<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

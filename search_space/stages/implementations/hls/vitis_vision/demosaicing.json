@@ -1,6 +1,8 @@
 {
   "stage": "demosaicing",
-  "include": "imgproc/xf_demosaicing.hpp",
+  "include": [
+    "imgproc/xf_demosaicing.hpp"
+  ],
   "function": [
     "xf::cv::demosaicing<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "aec",
-  "include": "imgproc/xf_aec.hpp",
+  "include": [
+    "imgproc/xf_aec.hpp"
+  ],
   "function": [
     "xf::cv::autoexposurecorrection<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

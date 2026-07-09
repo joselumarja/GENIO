@@ -1,6 +1,8 @@
 {
   "stage": "clahe",
-  "include": "imgproc/xf_clahe.hpp",
+  "include": [
+    "imgproc/xf_clahe.hpp"
+  ],
   "function": [
     "xf::cv::clahe<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

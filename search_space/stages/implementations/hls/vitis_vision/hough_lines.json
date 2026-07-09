@@ -1,6 +1,8 @@
 {
   "stage": "hough_lines",
-  "include": "imgproc/xf_houghlines.hpp",
+  "include": [
+    "imgproc/xf_houghlines.hpp"
+  ],
   "function": [
     "xf::cv::HoughLines<@RHO, @THETA, @MAXLINES, @DIAG, @MINTHETA, @MAXTHETA, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @output_1, @threshold, @linesmax);"
   ],

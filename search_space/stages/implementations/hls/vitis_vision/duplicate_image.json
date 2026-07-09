@@ -1,6 +1,8 @@
 {
   "stage": "duplicate_image",
-  "include": "imgproc/xf_duplicateimage.hpp",
+  "include": [
+    "imgproc/xf_duplicateimage.hpp"
+  ],
   "function": [
     "xf::cv::duplicateMat<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "hdr_merge",
-  "include": "imgproc/xf_hdrmerge.hpp",
+  "include": [
+    "imgproc/xf_hdrmerge.hpp"
+  ],
   "function": [
     "xf::cv::Hdrmerge<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

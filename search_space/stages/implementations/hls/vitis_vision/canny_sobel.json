@@ -1,6 +1,8 @@
 {
   "stage": "canny_sobel",
-  "include": "imgproc/xf_canny_sobel.hpp",
+  "include": [
+    "imgproc/xf_canny_sobel.hpp"
+  ],
   "function": [
     "xf::cv::CannySobel<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

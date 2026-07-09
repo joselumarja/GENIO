@@ -1,6 +1,8 @@
 {
   "stage": "channel_combine",
-  "include": "imgproc/xf_channel_combine.hpp",
+  "include": [
+    "imgproc/xf_channel_combine.hpp"
+  ],
   "function": [
     "xf::cv::merge<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

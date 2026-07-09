@@ -1,6 +1,8 @@
 {
   "stage": "mean_stddev",
-  "include": "core/xf_mean_stddev.hpp",
+  "include": [
+    "core/xf_mean_stddev.hpp"
+  ],
   "function": [
     "xf::cv::meanStdDev<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

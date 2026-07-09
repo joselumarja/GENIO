@@ -1,6 +1,8 @@
 {
   "stage": "stereo_lbm",
-  "include": "imgproc/xf_stereolbm.hpp",
+  "include": [
+    "imgproc/xf_stereolbm.hpp"
+  ],
   "function": [
     "xf::cv::StereoBM<@TYPE, @ROWS, @COLS, @NPC, @num_disparities, @block_size>(@input_0, @input_1, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "hog_descriptor",
-  "include": "imgproc/xf_hog_descriptor.hpp",
+  "include": [
+    "imgproc/xf_hog_descriptor.hpp"
+  ],
   "function": [
     "xf::cv::HOGDescriptor<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

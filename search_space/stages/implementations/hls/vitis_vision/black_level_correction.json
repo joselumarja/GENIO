@@ -1,6 +1,8 @@
 {
   "stage": "black_level_correction",
-  "include": "imgproc/xf_black_level.hpp",
+  "include": [
+    "imgproc/xf_black_level.hpp"
+  ],
   "function": [
     "xf::cv::blackLevelCorrection<@TYPE, @ROWS, @COLS, @NPC, @MUL_VALUE_WIDTH, @FL_POS, @USE_DSP, @XFCVDEPTH_IN, @XFCVDEPTH_OUT>(@input_0, @output_0, @black_level, @MUL_VALUE);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "delay",
-  "include": "imgproc/xf_delay.hpp",
+  "include": [
+    "imgproc/xf_delay.hpp"
+  ],
   "function": [
     "xf::cv::delayMat<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

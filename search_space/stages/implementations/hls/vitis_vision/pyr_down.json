@@ -1,6 +1,8 @@
 {
   "stage": "pyr_down",
-  "include": "imgproc/xf_pyr_down.hpp",
+  "include": [
+    "imgproc/xf_pyr_down.hpp"
+  ],
   "function": [
     "xf::cv::pyrDown<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

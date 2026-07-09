@@ -1,6 +1,8 @@
 {
   "stage": "rotate",
-  "include": "imgproc/xf_rotate.hpp",
+  "include": [
+    "imgproc/xf_rotate.hpp"
+  ],
   "function": [
     "xf::cv::rotate<@INPUT_PTR_WIDTH, @OUTPUT_PTR_WIDTH, @TYPE, @TILE_SIZE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @ROWS, @COLS, @rotate_code);"
   ],

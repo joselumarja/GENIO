@@ -1,6 +1,8 @@
 {
   "stage": "scharr",
-  "include": "imgproc/xf_scharr.hpp",
+  "include": [
+    "imgproc/xf_scharr.hpp"
+  ],
   "function": [
     "xf::cv::Scharr<@BORDER_TYPE, @TYPE, @OUT_TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @output_1);"
   ],

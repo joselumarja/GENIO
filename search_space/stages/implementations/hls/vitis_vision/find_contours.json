@@ -1,6 +1,8 @@
 {
   "stage": "find_contours",
-  "include": "imgproc/xf_findcontours.hpp",
+  "include": [
+    "imgproc/xf_findcontours.hpp"
+  ],
   "function": [
     "xf::cv::findContours<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

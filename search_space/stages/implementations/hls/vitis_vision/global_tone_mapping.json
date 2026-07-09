@@ -1,6 +1,8 @@
 {
   "stage": "global_tone_mapping",
-  "include": "imgproc/xf_gtm.hpp",
+  "include": [
+    "imgproc/xf_gtm.hpp"
+  ],
   "function": [
     "xf::cv::gtm<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

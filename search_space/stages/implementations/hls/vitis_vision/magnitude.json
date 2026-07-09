@@ -1,6 +1,8 @@
 {
   "stage": "magnitude",
-  "include": "core/xf_magnitude.hpp",
+  "include": [
+    "core/xf_magnitude.hpp"
+  ],
   "function": [
     "xf::cv::magnitude<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

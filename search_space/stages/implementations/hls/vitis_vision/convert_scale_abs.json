@@ -1,6 +1,8 @@
 {
   "stage": "convert_scale_abs",
-  "include": "imgproc/xf_convertscaleabs.hpp",
+  "include": [
+    "imgproc/xf_convertscaleabs.hpp"
+  ],
   "function": [
     "xf::cv::convertScaleAbs<@TYPE, @OUT_TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @alpha, @beta);"
   ],

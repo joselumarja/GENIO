@@ -1,6 +1,8 @@
 {
   "stage": "bgr_to_hsv",
-  "include": "imgproc/xf_bgr2hsv.hpp",
+  "include": [
+    "imgproc/xf_bgr2hsv.hpp"
+  ],
   "function": [
     "xf::cv::bgr2hsv<XF_8UC3, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

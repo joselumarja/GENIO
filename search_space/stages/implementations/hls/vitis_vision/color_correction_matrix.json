@@ -1,6 +1,8 @@
 {
   "stage": "color_correction_matrix",
-  "include": "imgproc/xf_colorcorrectionmatrix.hpp",
+  "include": [
+    "imgproc/xf_colorcorrectionmatrix.hpp"
+  ],
   "function": [
     "xf::cv::colorcorrectionmatrix<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "bilateral_filter",
-  "include": "imgproc/xf_bilateral_filter.hpp",
+  "include": [
+    "imgproc/xf_bilateral_filter.hpp"
+  ],
   "function": [
     "xf::cv::bilateralFilter<@diameter, @BORDER_TYPE, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @sigma_color, @sigma_space);"
   ],

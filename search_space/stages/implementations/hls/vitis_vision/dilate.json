@@ -1,8 +1,11 @@
 {
   "stage": "dilate",
-  "include": "imgproc/xf_dilation.hpp",
+  "include": [
+    "imgproc/xf_dilation.hpp"
+  ],
   "function": [
-    "xf::cv::dilate<@BORDER_TYPE, @TYPE, @ROWS, @COLS, @K_SHAPE, @K_ROWS, @K_COLS, @ITERATIONS, @NPC>(@input_0, @output_0, @kernel);"
+    "unsigned char kernel[K_ROWS * K_COLS];",
+    "xf::cv::dilate<@BORDER_TYPE, @TYPE, @ROWS, @COLS, @K_SHAPE, @K_ROWS, @K_COLS, @ITERATIONS, @NPC>(@input_0, @output_0, kernel);"
   ],
   "configuration": [
     "@K_SHAPE",

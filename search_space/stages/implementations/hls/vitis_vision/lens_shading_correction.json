@@ -1,6 +1,8 @@
 {
   "stage": "lens_shading_correction",
-  "include": "imgproc/xf_lensshadingcorrection.hpp",
+  "include": [
+    "imgproc/xf_lensshadingcorrection.hpp"
+  ],
   "function": [
     "xf::cv::Lscdistancebased<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

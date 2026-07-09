@@ -1,6 +1,8 @@
 {
   "stage": "gaussian_filter",
-  "include": "imgproc/xf_gaussian_filter.hpp",
+  "include": [
+    "imgproc/xf_gaussian_filter.hpp"
+  ],
   "function": [
     "xf::cv::GaussianBlur<@FILTER_WIDTH, @BORDER_TYPE, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @sigma);"
   ],

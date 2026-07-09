@@ -1,6 +1,8 @@
 {
   "stage": "auto_white_balance",
-  "include": "imgproc/xf_autowhitebalance.hpp",
+  "include": [
+    "imgproc/xf_autowhitebalance.hpp"
+  ],
   "function": [
     "xf::cv::AWB<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

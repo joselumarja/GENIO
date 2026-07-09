@@ -84,6 +84,9 @@
     }
   ],
   "constraints": [
-    "@K_ROWS == @K_COLS"
+    "is_odd(@K_COLS)",
+    "is_odd(@K_ROWS)",
+    "@K_COLS > 1",
+    "@K_ROWS > 1"
   ]
 }

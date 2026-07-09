@@ -1,6 +1,8 @@
 {
   "stage": "channel_extract",
-  "include": "imgproc/xf_channel_extract.hpp",
+  "include": [
+    "imgproc/xf_channel_extract.hpp"
+  ],
   "function": [
     "xf::cv::extractChannel<@TYPE, @OUT_TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @channel);"
   ],

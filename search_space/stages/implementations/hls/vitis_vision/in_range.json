@@ -1,6 +1,8 @@
 {
   "stage": "in_range",
-  "include": "imgproc/xf_inrange.hpp",
+  "include": [
+    "imgproc/xf_inrange.hpp"
+  ],
   "function": [
     "unsigned char lower_bound[3] = {@lower_0, @lower_1, @lower_2};",
     "unsigned char upper_bound[3] = {@upper_0, @upper_1, @upper_2};",

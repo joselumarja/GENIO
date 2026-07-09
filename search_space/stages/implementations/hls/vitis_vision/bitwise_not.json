@@ -1,6 +1,8 @@
 {
   "stage": "bitwise_not",
-  "include": "core/xf_arithm.hpp",
+  "include": [
+    "core/xf_arithm.hpp"
+  ],
   "function": [
     "xf::cv::bitwise_not<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

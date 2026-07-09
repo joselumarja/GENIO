@@ -1,6 +1,8 @@
 {
   "stage": "phase",
-  "include": "core/xf_phase.hpp",
+  "include": [
+    "core/xf_phase.hpp"
+  ],
   "function": [
     "xf::cv::phase<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

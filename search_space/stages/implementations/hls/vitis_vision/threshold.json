@@ -1,6 +1,8 @@
 {
   "stage": "threshold",
-  "include": "imgproc/xf_threshold.hpp",
+  "include": [
+    "imgproc/xf_threshold.hpp"
+  ],
   "function": [
     "xf::cv::Threshold<@THRESHOLD_TYPE, @TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @threshold, @maxval);"
   ],

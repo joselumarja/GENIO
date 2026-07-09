@@ -1,6 +1,8 @@
 {
   "stage": "preprocess",
-  "include": "dnn/xf_preprocess.hpp",
+  "include": [
+    "dnn/xf_preprocess.hpp"
+  ],
   "function": [
     "xf::cv::preProcess<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

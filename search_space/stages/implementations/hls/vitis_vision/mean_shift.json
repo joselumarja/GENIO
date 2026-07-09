@@ -1,6 +1,8 @@
 {
   "stage": "mean_shift",
-  "include": "imgproc/xf_mean_shift.hpp",
+  "include": [
+    "imgproc/xf_mean_shift.hpp"
+  ],
   "function": [
     "xf::cv::MeanShift<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "bad_pixel_correction",
-  "include": "imgproc/xf_bpc.hpp",
+  "include": [
+    "imgproc/xf_bpc.hpp"
+  ],
   "function": [
     "xf::cv::badpixelcorrection<@TYPE, @ROWS, @COLS, @NPC, @BORDER_T, @USE_URAM, @SLICES, @XFCVDEPTH_IN_1, @XFCVDEPTH_OUT_1>(@input_0, @output_0);"
   ],

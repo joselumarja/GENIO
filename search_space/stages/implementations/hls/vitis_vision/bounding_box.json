@@ -1,6 +1,8 @@
 {
   "stage": "bounding_box",
-  "include": "imgproc/xf_boundingbox.hpp",
+  "include": [
+    "imgproc/xf_boundingbox.hpp"
+  ],
   "function": [
     "xf::cv::boundingbox<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

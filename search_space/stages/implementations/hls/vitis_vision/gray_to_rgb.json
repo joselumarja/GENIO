@@ -1,6 +1,8 @@
 {
   "stage": "gray_to_rgb",
-  "include": "imgproc/xf_cvt_color.hpp",
+  "include": [
+    "imgproc/xf_cvt_color.hpp"
+  ],
   "function": [
     "xf::cv::gray2rgb<XF_8UC1, XF_8UC3, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

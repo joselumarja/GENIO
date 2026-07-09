@@ -1,6 +1,8 @@
 {
   "stage": "quantization_dithering",
-  "include": "imgproc/xf_quantizationdithering.hpp",
+  "include": [
+    "imgproc/xf_quantizationdithering.hpp"
+  ],
   "function": [
     "xf::cv::xf_QuatizationDithering<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

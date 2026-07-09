@@ -1,11 +1,19 @@
 {
   "stage": "hist_equalize",
-  "include": "imgproc/xf_hist_equalize.hpp",
+  "include": [
+    "imgproc/xf_hist_equalize.hpp"
+  ],
   "function": [
-    "xf::cv::equalizeHist<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @input_duplicate, @output_0);"
+    "xf::cv::Mat<@TYPE, @ROWS, @COLS, @NPC> imgInputGray1(@ROWS, @COLS);",
+    "xf::cv::Mat<@TYPE, @ROWS, @COLS, @NPC>imgInputGray2(@ROWS, @COLS);",
+    "#pragma HLS STREAM variable=imgInputGray2 depth=@HLS_STREAM_DEPTH dim=1",
+    "#pragma HLS STREAM variable=imgInputGray1 depth=@HLS_STREAM_DEPTH dim=1",
+    "xf::cv::duplicateMat<XF_8UC1, @ROWS, @COLS, @NPC>(@input_0, imgInputGray1, imgInputGray2);",
+    "xf::cv::equalizeHist<@TYPE, @ROWS, @COLS, @NPC>(imgInputGray1, imgInputGray2, @output_0);"
   ],
   "configuration": [],
   "tokens": {
+    "@HLS_STREAM_DEPTH": "Depth for hls stream objects",
     "@COLS": "Maximum image width used to specialize the hardware function.",
     "@NPC": "Pixels processed per clock cycle selected by the composition layer.",
     "@ROWS": "Maximum image height used to specialize the hardware function.",

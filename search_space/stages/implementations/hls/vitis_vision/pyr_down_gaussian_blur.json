@@ -1,6 +1,8 @@
 {
   "stage": "pyr_down_gaussian_blur",
-  "include": "imgproc/xf_pyr_down_gaussian_blur.hpp",
+  "include": [
+    "imgproc/xf_pyr_down_gaussian_blur.hpp"
+  ],
   "function": [
     "xf::cv::pyrDownGaussianBlur<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "crop",
-  "include": "imgproc/xf_crop.hpp",
+  "include": [
+    "imgproc/xf_crop.hpp"
+  ],
   "function": [
     "xf::cv::Rect_<unsigned int> roi(@x, @y, @OUT_COLS, @OUT_ROWS);",
     "xf::cv::crop<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, roi);"

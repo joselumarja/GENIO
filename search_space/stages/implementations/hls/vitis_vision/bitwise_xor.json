@@ -1,6 +1,8 @@
 {
   "stage": "bitwise_xor",
-  "include": "core/xf_arithm.hpp",
+  "include": [
+    "core/xf_arithm.hpp"
+  ],
   "function": [
     "xf::cv::bitwise_xor<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

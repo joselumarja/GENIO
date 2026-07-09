@@ -1,6 +1,21 @@
-from genio.core.candidate import Candidate
-from genio.core.evaluator import Evaluator
+from genio.core.artifact import (
+    Artifact,
+    ArtifactError,
+    MetricArtifact,
+)
+from genio.core.evaluation import Evaluation
 from genio.core.individual import Individual, StageChoice
 from genio.core.result import Result, ResultStatus
+from genio.core.search_result import SearchResult
 
-__all__ = ["Candidate", "Evaluator", "Individual", "Result", "ResultStatus", "StageChoice"]
+__all__ = [
+    "Artifact",
+    "ArtifactError",
+    "MetricArtifact",
+    "Evaluation",
+    "Individual",
+    "Result",
+    "ResultStatus",
+    "SearchResult",
+    "StageChoice",
+]

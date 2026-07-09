@@ -1,6 +1,8 @@
 {
   "stage": "sobel",
-  "include": "imgproc/xf_sobel.hpp",
+  "include": [
+    "imgproc/xf_sobel.hpp"
+  ],
   "function": [
     "xf::cv::Sobel<@BORDER_TYPE, @FILTER_WIDTH, @TYPE, @OUT_TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @output_1);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "box_filter",
-  "include": "imgproc/xf_box_filter.hpp",
+  "include": [
+    "imgproc/xf_box_filter.hpp"
+  ],
   "function": [
     "xf::cv::boxFilter<@BORDER_TYPE, @TYPE, @ROWS, @COLS, @NPC, @K_ROWS, @K_COLS>(@input_0, @output_0);"
   ],

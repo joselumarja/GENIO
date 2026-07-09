@@ -1,6 +1,8 @@
 {
   "stage": "add",
-  "include": "core/xf_arithm.hpp",
+  "include": [
+    "core/xf_arithm.hpp"
+  ],
   "function": [
     "xf::cv::add<@POLICY_TYPE, @TYPE, @ROWS, @COLS, @NPC, @XFCVDEPTH_IN_1, @XFCVDEPTH_IN_2, @XFCVDEPTH_OUT_1>(@input_0, @input_1, @output_0);"
   ],

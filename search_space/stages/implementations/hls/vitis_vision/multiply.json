@@ -1,6 +1,8 @@
 {
   "stage": "multiply",
-  "include": "core/xf_arithm.hpp",
+  "include": [
+    "core/xf_arithm.hpp"
+  ],
   "function": [
     "xf::cv::multiply<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

@@ -1,6 +1,8 @@
 {
   "stage": "corner_update",
-  "include": "imgproc/xf_corner_update.hpp",
+  "include": [
+    "imgproc/xf_corner_update.hpp"
+  ],
   "function": [
     "xf::cv::cornerUpdate<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

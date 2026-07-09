@@ -1,6 +1,8 @@
 {
   "stage": "min_max_loc",
-  "include": "core/xf_min_max_loc.hpp",
+  "include": [
+    "core/xf_min_max_loc.hpp"
+  ],
   "function": [
     "xf::cv::minMaxLoc<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

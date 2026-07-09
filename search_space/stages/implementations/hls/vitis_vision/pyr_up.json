@@ -1,6 +1,8 @@
 {
   "stage": "pyr_up",
-  "include": "imgproc/xf_pyr_up.hpp",
+  "include": [
+    "imgproc/xf_pyr_up.hpp"
+  ],
   "function": [
     "xf::cv::pyrUp<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

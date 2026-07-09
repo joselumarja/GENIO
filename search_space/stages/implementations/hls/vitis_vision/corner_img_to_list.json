@@ -1,6 +1,8 @@
 {
   "stage": "corner_img_to_list",
-  "include": "imgproc/xf_corner_img_to_list.hpp",
+  "include": [
+    "imgproc/xf_corner_img_to_list.hpp"
+  ],
   "function": [
     "xf::cv::cornersImgToList<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

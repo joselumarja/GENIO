@@ -1,6 +1,8 @@
 {
   "stage": "remap",
-  "include": "imgproc/xf_remap.hpp",
+  "include": [
+    "imgproc/xf_remap.hpp"
+  ],
   "function": [
     "xf::cv::remap<@INTERPOLATION, @WIN_ROWS, @TYPE, @OUT_TYPE, @MAP_TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0, @input_1, @input_2);"
   ],

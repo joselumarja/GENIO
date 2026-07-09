@@ -1,6 +1,8 @@
 {
   "stage": "letterbox",
-  "include": "dnn/xf_letterbox.hpp",
+  "include": [
+    "dnn/xf_letterbox.hpp"
+  ],
   "function": [
     "xf::cv::letterbox<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

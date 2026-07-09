@@ -1,6 +1,8 @@
 {
   "stage": "accumulate",
-  "include": "imgproc/xf_accumulate_image.hpp",
+  "include": [
+    "imgproc/xf_accumulate_image.hpp"
+  ],
   "function": [
     "xf::cv::accumulate<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],

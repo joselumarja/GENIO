@@ -1,6 +1,8 @@
 {
   "stage": "bfmatcher",
-  "include": "imgproc/xf_bfmatcher.hpp",
+  "include": [
+    "imgproc/xf_bfmatcher.hpp"
+  ],
   "function": [
     "xf::cv::bfMatcher<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
   ],
