@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from numbers import Real
 
 from genio.backend.base import Backend
-from genio.core.artifact import Artifact, MetricArtifact
+from genio.artifacts import Artifact, MetricArtifact
 from genio.core.individual import Individual
 from genio.core.result import Result
 from genio.evaluation.step import EvaluationStep

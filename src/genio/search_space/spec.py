@@ -13,6 +13,14 @@ class SlotSpec:
     index: int
     alternatives: tuple[StageChoice, ...]
 
+    @property
+    def stage_groups(self) -> tuple[tuple[int, ...], ...]:
+        """Alternative indexes grouped by stage, preserving first-seen order."""
+        groups: dict[str, list[int]] = {}
+        for alternative_index, alternative in enumerate(self.alternatives):
+            groups.setdefault(alternative.stage, []).append(alternative_index)
+        return tuple(tuple(indexes) for indexes in groups.values())
+
 
 @dataclass(frozen=True, slots=True)
 class SearchScenarioSpec:
@@ -20,4 +28,5 @@ class SearchScenarioSpec:
 
     id: str
     slots: tuple[SlotSpec, ...]
+    design_spaces: dict[str, dict[str, tuple[Any, ...]]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)

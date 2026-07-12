@@ -110,9 +110,17 @@ class SearchSpace:
         return tuple(len(slot.alternatives) for slot in self.scenario.slots)
 
     @property
+    def design_lengths(self) -> tuple[int, ...]:
+        return tuple(len(values) for _, _, values in self._design_parameters())
+
+    @property
+    def genotype_lengths(self) -> tuple[int, ...]:
+        return self.slot_lengths + self.design_lengths
+
+    @property
     def search_space_size(self) -> int:
         total = 1
-        for length in self.slot_lengths:
+        for length in self.genotype_lengths:
             total *= length
         return total
 
@@ -126,10 +134,14 @@ class SearchSpace:
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
+        slot_genotype = normalized_genotype[: len(self.scenario.slots)]
+        design_genotype = normalized_genotype[len(self.scenario.slots) :]
+
         slots = tuple(
             self.scenario.slots[slot_index].alternatives[gene]
-            for slot_index, gene in enumerate(normalized_genotype)
+            for slot_index, gene in enumerate(slot_genotype)
         )
+        design = self._design_from_genotype(design_genotype)
 
         return Individual.from_slots(
             id=id or self._new_id(),
@@ -137,6 +149,7 @@ class SearchSpace:
             slots=slots,
             genotype=normalized_genotype,
             search_index=self.genotype_to_index(normalized_genotype),
+            design=design,
             metadata=metadata,
         )
 
@@ -170,8 +183,41 @@ class SearchSpace:
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
         rng = random or Random()
-        genotype = tuple(rng.randrange(length) for length in self.slot_lengths)
+        genotype = tuple(rng.randrange(length) for length in self.genotype_lengths)
         return self.from_genotype(genotype, metadata=metadata)
+
+    def sample_balanced(
+        self,
+        *,
+        random: Random | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Individual:
+        rng = random or Random()
+        genotype = tuple(self._sample_balanced_gene(slot, rng) for slot in self.scenario.slots)
+        genotype += tuple(rng.randrange(length) for length in self.design_lengths)
+        return self.from_genotype(genotype, metadata=metadata)
+
+    def sample_slot(
+        self,
+        slot_index: int,
+        *,
+        random: Random | None = None,
+    ) -> tuple[StageChoice, int]:
+        rng = random or Random()
+        slot = self._slot(slot_index)
+        gene = rng.randrange(len(slot.alternatives))
+        return slot.alternatives[gene], gene
+
+    def sample_slot_balanced(
+        self,
+        slot_index: int,
+        *,
+        random: Random | None = None,
+    ) -> tuple[StageChoice, int]:
+        rng = random or Random()
+        slot = self._slot(slot_index)
+        gene = self._sample_balanced_gene(slot, rng)
+        return slot.alternatives[gene], gene
 
     def sample_population(
         self,
@@ -180,21 +226,64 @@ class SearchSpace:
         unique: bool = True,
         random: Random | None = None,
         metadata: dict[str, Any] | None = None,
+        exclude_indexes: set[int] | None = None,
+    ) -> list[Individual]:
+        return self._sample_population(
+            size,
+            unique=unique,
+            random=random,
+            metadata=metadata,
+            balanced=False,
+            exclude_indexes=exclude_indexes,
+        )
+
+    def sample_balanced_population(
+        self,
+        size: int,
+        *,
+        unique: bool = True,
+        random: Random | None = None,
+        metadata: dict[str, Any] | None = None,
+        exclude_indexes: set[int] | None = None,
+    ) -> list[Individual]:
+        return self._sample_population(
+            size,
+            unique=unique,
+            random=random,
+            metadata=metadata,
+            balanced=True,
+            exclude_indexes=exclude_indexes,
+        )
+
+    def _sample_population(
+        self,
+        size: int,
+        *,
+        unique: bool,
+        random: Random | None,
+        metadata: dict[str, Any] | None,
+        balanced: bool,
+        exclude_indexes: set[int] | None,
     ) -> list[Individual]:
         if size < 0:
             raise ValueError("Population size cannot be negative.")
-        if unique and size > self.search_space_size:
+        excluded = exclude_indexes or set()
+        available_size = self.search_space_size - len(excluded)
+        if unique and size > available_size:
             raise ValueError(
                 f"Cannot sample {size} unique individuals from a search space "
-                f"with size {self.search_space_size}."
+                f"with {available_size} available individuals."
             )
 
         population: list[Individual] = []
-        seen: set[int] = set()
+        seen: set[int] = set(excluded)
         rng = random or Random()
 
         while len(population) < size:
-            individual = self.sample(random=rng, metadata=metadata)
+            if balanced:
+                individual = self.sample_balanced(random=rng, metadata=metadata)
+            else:
+                individual = self.sample(random=rng, metadata=metadata)
             if unique:
                 assert individual.search_index is not None
                 if individual.search_index in seen:
@@ -204,12 +293,25 @@ class SearchSpace:
 
         return population
 
+    @staticmethod
+    def _sample_balanced_gene(slot: SlotSpec, rng: Random) -> int:
+        stage_group = rng.choice(slot.stage_groups)
+        return rng.choice(stage_group)
+
+    def _slot(self, slot_index: int) -> SlotSpec:
+        if slot_index < 0 or slot_index >= len(self.scenario.slots):
+            raise ValueError(
+                f"Slot index {slot_index} is out of range "
+                f"[0, {len(self.scenario.slots)})."
+            )
+        return self.scenario.slots[slot_index]
+
     def genotype_to_index(self, genotype: tuple[int, ...] | list[int]) -> int:
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
         index = 0
-        for gene, base in zip(normalized_genotype, self.slot_lengths):
+        for gene, base in zip(normalized_genotype, self.genotype_lengths):
             index = index * base + gene
         return index
 
@@ -225,7 +327,7 @@ class SearchSpace:
         remaining = search_index
         genes: list[int] = []
 
-        for base in reversed(self.slot_lengths):
+        for base in reversed(self.genotype_lengths):
             genes.append(remaining % base)
             remaining //= base
 
@@ -267,7 +369,8 @@ class SearchSpace:
         return self.genotype_to_index(self.to_genotype(individual))
 
     def to_genotype(self, individual: Individual) -> tuple[int, ...]:
-        genotype = self.slots_to_genotype(individual.slots)
+        slot_genotype = self.slots_to_genotype(individual.slots)[: len(self.scenario.slots)]
+        genotype = slot_genotype + self._design_to_genotype(individual.design)
         if individual.genotype is not None and individual.genotype != genotype:
             raise ValueError(
                 f"Individual genotype {individual.genotype!r} does not match "
@@ -275,19 +378,53 @@ class SearchSpace:
             )
         return genotype
 
+    def _design_to_genotype(self, design: dict[str, Any]) -> tuple[int, ...]:
+        genes: list[int] = []
+        for domain, name, values in self._design_parameters():
+            domain_design = design.get(domain, {})
+            if not isinstance(domain_design, dict):
+                raise ValueError(f"Design domain {domain!r} must be a mapping.")
+            value = domain_design.get(name, values[0])
+            try:
+                genes.append(values.index(value))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Design value {value!r} is not valid for {domain}.{name}."
+                ) from exc
+        return tuple(genes)
+
     def _validate_genotype(self, genotype: tuple[int, ...]) -> None:
-        if len(genotype) != len(self.slot_lengths):
+        if len(genotype) != len(self.genotype_lengths):
             raise ValueError(
-                f"Expected genotype length {len(self.slot_lengths)}, "
+                f"Expected genotype length {len(self.genotype_lengths)}, "
                 f"got {len(genotype)}."
             )
 
-        for slot_index, (gene, length) in enumerate(zip(genotype, self.slot_lengths)):
+        slot_count = len(self.scenario.slots)
+        for position, (gene, length) in enumerate(zip(genotype, self.genotype_lengths)):
             if gene < 0 or gene >= length:
+                label = (
+                    f"slot {position}"
+                    if position < slot_count
+                    else f"design parameter {position - slot_count}"
+                )
                 raise ValueError(
-                    f"Gene {gene} for slot {slot_index} is out of range "
+                    f"Gene {gene} for {label} is out of range "
                     f"[0, {length})."
                 )
+
+    def _design_from_genotype(self, design_genotype: tuple[int, ...]) -> dict[str, Any]:
+        design: dict[str, dict[str, Any]] = {}
+        for (domain, name, values), gene in zip(self._design_parameters(), design_genotype):
+            design.setdefault(domain, {})[name] = values[gene]
+        return design
+
+    def _design_parameters(self) -> tuple[tuple[str, str, tuple[Any, ...]], ...]:
+        return tuple(
+            (domain, name, values)
+            for domain, parameters in self.scenario.design_spaces.items()
+            for name, values in parameters.items()
+        )
 
     def _new_id(self) -> str:
         value = self._next_id
@@ -309,14 +446,36 @@ class SearchSpace:
             cls._build_slot_spec(slot_config, stage_definitions)
             for slot_config in test_config["pipeline"]
         )
+        design_spaces = cls._build_design_spaces(test_config)
 
         metadata = {
             key: value
             for key, value in test_config.items()
-            if key not in {"id", "pipeline"}
+            if key not in {"id", "pipeline", "design_spaces"}
         }
 
-        return SearchScenarioSpec(id=scenario_id, slots=slots, metadata=metadata)
+        return SearchScenarioSpec(
+            id=scenario_id,
+            slots=slots,
+            design_spaces=design_spaces,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def _build_design_spaces(cls, test_config: dict[str, Any]) -> dict[str, dict[str, tuple[Any, ...]]]:
+        if "design_spaces" in test_config:
+            return {
+                domain: cls._build_design_space(parameters)
+                for domain, parameters in test_config["design_spaces"].items()
+            }
+        return {}
+
+    @classmethod
+    def _build_design_space(cls, design_space_config: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
+        return {
+            name: cls._parameter_values(spec)
+            for name, spec in design_space_config.items()
+        }
 
     @staticmethod
     def _load_stage_definitions(

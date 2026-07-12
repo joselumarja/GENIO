@@ -9,7 +9,7 @@ from typing import Any
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from genio.core.artifact import Artifact
+    from genio.artifacts import Artifact
     from genio.evaluation.task import EvaluationTask
 
 

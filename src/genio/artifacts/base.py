@@ -38,3 +38,6 @@ class MetricArtifact(Artifact, ABC):
     @abstractmethod
     def metrics(self) -> Mapping[str, float]:
         """Return normalized numeric metrics exposed by this artifact."""
+
+
+__all__ = ["Artifact", "ArtifactError", "MetricArtifact"]

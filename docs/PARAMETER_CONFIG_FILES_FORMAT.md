@@ -21,6 +21,20 @@ Un archivo de configuración tiene esta forma:
   "id": "color_threshold_pipeline",
   "description": "Example search space for color conversion and range thresholding.",
   "resources": {},
+  "design_spaces": {
+    "hls": {
+      "pipeline_ii": {
+        "type": "choice",
+        "values": [1, 2]
+      }
+    },
+    "system": {
+      "memory_size": {
+        "type": "choice",
+        "values": [32768, 65536]
+      }
+    }
+  },
   "pipeline": [
     {
       "slot": 0,
@@ -53,6 +67,7 @@ Campos de primer nivel:
 | `id` | Sí | Identificador del escenario de configuración. |
 | `description` | No | Descripción humana del escenario. |
 | `resources` | No | Recursos externos disponibles para wrappers o valores cargados. |
+| `design_spaces` | No | Espacios de decisión globales separados por dominio, por ejemplo `hls` o `system`. |
 | `pipeline` | Sí | Lista ordenada de slots del pipeline. |
 
 ---
@@ -109,7 +124,72 @@ Los recursos no se conectan como `interface.inputs`. Se usan como valores cargad
 
 ---
 
-## 5. Campo `pipeline`
+## 5. Campo `design_spaces`
+
+`design_spaces` declara decisiones globales que forman parte del mismo espacio de búsqueda que el pipeline, pero no pertenecen a una stage concreta.
+
+Ejemplo:
+
+```json
+"design_spaces": {
+  "hls": {
+    "pipeline_ii": {
+      "type": "choice",
+      "values": [1, 2, 4]
+    },
+    "array_partition": {
+      "type": "choice",
+      "values": ["none", "cyclic", "complete"]
+    }
+  },
+  "system": {
+    "memory_size": {
+      "type": "choice",
+      "values": [32768, 65536, 131072]
+    },
+    "mcu": {
+      "type": "choice",
+      "values": ["x-heep-small", "x-heep-big"]
+    }
+  }
+}
+```
+
+Cada clave de primer nivel dentro de `design_spaces` es un dominio. Los dominios actuales recomendados son:
+
+| Dominio | Uso |
+|---|---|
+| `hls` | Parámetros globales para síntesis HLS, como II objetivo, estrategia general de particionado o formato de salida. |
+| `system` | Parámetros de una plataforma o sistema externo, por ejemplo memoria disponible, tipo de MCU o configuración X-HEEP. |
+
+Los dominios tienen objetivos distintos. Un step de síntesis HLS debe consumir `Individual.design["hls"]`; un step de evaluación de sistema debe consumir `Individual.design["system"]`; un step funcional de imagen puede ignorar ambos.
+
+Los parámetros dentro de cada dominio usan los mismos tipos de configuración finitos que `candidate.parameters`: `constant`, `choice`, `integer_range` y `number_range`. `file_ref` y `object_ref` están pensados para `wrapper_inputs`, no para decisiones globales de diseño.
+
+El individuo generado mantiene estos valores separados:
+
+```python
+individual.design == {
+    "hls": {
+        "pipeline_ii": 1,
+        "array_partition": "complete",
+    },
+    "system": {
+        "memory_size": 65536,
+        "mcu": "x-heep-small",
+    },
+}
+```
+
+El genotype y el `search_index` sí representan el espacio completo:
+
+```text
+genes de pipeline + genes de hls + genes de system + ...
+```
+
+---
+
+## 6. Campo `pipeline`
 
 Lista ordenada de slots.
 
@@ -130,7 +210,7 @@ Cada slot representa una posición lógica en el pipeline. El buscador/orquestad
 
 ---
 
-## 6. Slots
+## 7. Slots
 
 Un slot tiene esta forma:
 
@@ -159,7 +239,7 @@ La lista `pipeline` ya tiene orden, pero `slot` hace explícito el índice lógi
 
 ---
 
-## 7. Candidates
+## 8. Candidates
 
 Un candidato representa una etapa concreta que puede ocupar un slot.
 
@@ -191,7 +271,7 @@ Campos:
 
 ---
 
-## 8. Campo `stage`
+## 9. Campo `stage`
 
 Referencia a una etapa definida en:
 
@@ -212,7 +292,7 @@ Debe coincidir con `definition.id`, no con `definition.name`.
 
 ---
 
-## 9. Campo `parameters`
+## 10. Campo `parameters`
 
 Mapa de nombre de parámetro a especificación de valores.
 
@@ -261,7 +341,7 @@ La implementación usará después el token correspondiente, por ejemplo `@FILTE
 
 ---
 
-# 10. Tipos de configuración de parámetros
+# 11. Tipos de configuración de parámetros
 
 Los tipos usados en estos archivos no son los mismos que `definitions.parameters[*].type`.
 
@@ -279,7 +359,7 @@ constant, choice, integer_range, number_range, file_ref, object_ref...
 
 ---
 
-## 10.1 `constant`
+## 11.1 `constant`
 
 Valor fijo.
 
@@ -304,7 +384,7 @@ El campo principal es:
 
 ---
 
-## 10.2 `choice`
+## 11.2 `choice`
 
 Conjunto finito de opciones.
 
@@ -329,7 +409,7 @@ Campo principal:
 
 ---
 
-## 10.3 `integer_range`
+## 11.3 `integer_range`
 
 Rango discreto de enteros.
 
@@ -354,7 +434,7 @@ El proyecto debe fijar si `stop` es inclusivo o exclusivo en el generador defini
 
 ---
 
-## 10.4 `number_range`
+## 11.4 `number_range`
 
 Rango numérico para valores reales.
 
@@ -384,7 +464,7 @@ Campos:
 
 ---
 
-## 10.5 Parámetros compuestos
+## 11.5 Parámetros compuestos
 
 Si una etapa necesita un vector pequeño o una pareja de valores, cada componente se configura como un parámetro independiente.
 
@@ -411,7 +491,7 @@ Esta regla mantiene visible cada componente y permite que las restricciones gene
 
 ---
 
-## 10.6 `file_ref`
+## 11.6 `file_ref`
 
 Referencia a un recurso declarado en `resources.files`.
 
@@ -444,7 +524,7 @@ Campos:
 
 ---
 
-## 10.7 `object_ref`
+## 11.7 `object_ref`
 
 Referencia a un recurso declarado en `resources.objects`.
 
@@ -537,6 +617,20 @@ wrapper_inputs
 {
   "id": "color_threshold_pipeline",
   "description": "Example search space for color conversion and range thresholding.",
+  "design_spaces": {
+    "hls": {
+      "pipeline_ii": {
+        "type": "choice",
+        "values": [1, 2]
+      }
+    },
+    "system": {
+      "memory_size": {
+        "type": "choice",
+        "values": [32768, 65536]
+      }
+    }
+  },
   "pipeline": [
     {
       "slot": 0,
@@ -587,10 +681,13 @@ Para cada archivo de configuración:
 4. Cada candidate debe tener `stage`.
 5. `stage` debe existir como `definition.id`.
 6. Cada clave de `candidate.parameters` debe existir como `definition.parameters[*].name`.
-7. Los `file_ref` deben apuntar a claves existentes en `resources.files`.
-8. Los `object_ref` deben apuntar a claves existentes en `resources.objects`.
-9. `wrapper_inputs` no debe confundirse con `interface.inputs`.
-10. Si un candidato es `nop`, no necesita `parameters` ni `wrapper_inputs`.
+7. `design_spaces`, si existe, debe ser un mapa de dominios a mapas de parámetros.
+8. Cada dominio de `design_spaces` debe tener un nombre estable, por ejemplo `hls` o `system`.
+9. Cada parámetro de `design_spaces` debe usar un tipo de configuración soportado para espacios finitos.
+10. Los `file_ref` deben apuntar a claves existentes en `resources.files`.
+11. Los `object_ref` deben apuntar a claves existentes en `resources.objects`.
+12. `wrapper_inputs` no debe confundirse con `interface.inputs`.
+13. Si un candidato es `nop`, no necesita `parameters` ni `wrapper_inputs`.
 
 ---
 
@@ -602,6 +699,7 @@ Estos archivos responden a:
 ¿Qué pipeline o familia de pipelines se quiere explorar?
 ¿Qué etapas puede ocupar cada slot?
 ¿Qué valores puede tomar cada parámetro?
+¿Qué decisiones globales de HLS o sistema forman parte del diseño?
 ¿Qué recursos externos necesita el wrapper/composer?
 ```
 

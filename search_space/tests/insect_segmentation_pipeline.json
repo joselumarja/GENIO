@@ -1015,30 +1015,6 @@
           }
         }
       ]
-    },
-    {
-      "slot": 12,
-      "candidates": [
-        {
-          "stage": "connected_components"
-        }
-      ]
-    },
-    {
-      "slot": 13,
-      "candidates": [
-        {
-          "stage": "area_filter",
-          "parameters": {
-            "min_area": {
-              "type": "integer_range",
-              "start": 1,
-              "stop": 100,
-              "step": 2
-            }
-          }
-        }
-      ]
     }
   ]
 }

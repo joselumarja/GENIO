@@ -729,6 +729,7 @@ Responsabilidades:
 - Traducir un `Individual` a una representacion de dominio.
 - Reutilizar definiciones de stages.
 - Saltar etapas `nop` si aplica.
+- Consumir solo los dominios de `individual.design` que correspondan a su backend, por ejemplo `hls` para síntesis o `system` para integración de plataforma.
 - Preparar informacion que una task puede materializar.
 
 No debe:

@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from genio.backend.base import Backend, EvaluationHandle, EvaluationState
-from genio.core.artifact import Artifact
+from genio.artifacts import Artifact
 from genio.evaluation.task import EvaluationTask, ExecutionContext
 
 

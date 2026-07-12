@@ -1,16 +1,23 @@
-from genio.algorithm import SearchAlgorithm
+from genio.algorithm import GridSearch, RandomSearch, SearchAlgorithm
+from genio.artifacts import (
+    Artifact,
+    ArtifactError,
+    ImageFunctionalMetricsArtifact,
+    MetricArtifact,
+)
 from genio.backend import Backend, EvaluationHandle, EvaluationState, LocalBackend
 from genio.composer import (
     Composer,
     ComposerError,
+    ExecutionPackage,
+    HLSExecutionPackage,
+    PythonExecutionPackage,
+    PythonImagePipelineComposer,
     StageDefinitionNotFoundError,
 )
 from genio.core import (
-    Artifact,
-    ArtifactError,
     Evaluation,
     Individual,
-    MetricArtifact,
     Result,
     ResultStatus,
     SearchResult,
@@ -24,6 +31,10 @@ from genio.evaluation import (
     EvaluationWorkflow,
     EvaluationWorkflowError,
     ExecutionContext,
+    HLSSynthesisEvaluationStep,
+    HLSSynthesisTask,
+    PythonImageFunctionalEvaluationStep,
+    PythonImageFunctionalTask,
 )
 from genio.objective import (
     MetricObjective,
@@ -52,7 +63,13 @@ __all__ = [
     "EvaluationTask",
     "EvaluationWorkflow",
     "EvaluationWorkflowError",
+    "ExecutionPackage",
     "ExecutionContext",
+    "GridSearch",
+    "HLSSynthesisEvaluationStep",
+    "HLSSynthesisTask",
+    "HLSExecutionPackage",
+    "ImageFunctionalMetricsArtifact",
     "InMemoryStatistics",
     "Individual",
     "LocalBackend",
@@ -63,8 +80,13 @@ __all__ = [
     "ObjectiveSet",
     "OptimizationSession",
     "OptimizationDirection",
+    "PythonExecutionPackage",
+    "PythonImagePipelineComposer",
+    "PythonImageFunctionalEvaluationStep",
+    "PythonImageFunctionalTask",
     "Result",
     "ResultStatus",
+    "RandomSearch",
     "SearchAlgorithm",
     "SearchScenarioSpec",
     "SearchSpace",

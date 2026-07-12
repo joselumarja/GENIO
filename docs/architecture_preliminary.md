@@ -197,8 +197,11 @@ Campos:
 ```python
 id: str
 slots: tuple[SlotSpec, ...]
+design_spaces: dict[str, dict[str, tuple[Any, ...]]]
 metadata: dict[str, Any]
 ```
+
+`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. Por ejemplo, un dominio `hls` puede ser usado por `HLSSynthesisEvaluationStep`, mientras que un dominio `system` puede ser usado por un futuro step de integración o evaluación de plataforma.
 
 ### `SlotSpec`
 
@@ -244,8 +247,24 @@ scenario: str
 slots: tuple[StageChoice, ...]
 genotype: tuple[int, ...] | None
 search_index: int | None
+design: dict[str, Any]
 metadata: dict[str, Any]
 ```
+
+`design` mantiene separadas las decisiones globales por dominio:
+
+```python
+{
+    "hls": {
+        "pipeline_ii": 1,
+    },
+    "system": {
+        "memory_size": 65536,
+    },
+}
+```
+
+El genotype representa la combinación completa de genes de pipeline y genes de diseño. Los steps deben consumir solo el dominio que les corresponde.
 
 Interfaz:
 

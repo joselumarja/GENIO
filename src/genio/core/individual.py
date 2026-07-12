@@ -23,6 +23,7 @@ class Individual:
     slots: tuple[StageChoice, ...]
     genotype: tuple[int, ...] | None = None
     search_index: int | None = None
+    design: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -33,6 +34,7 @@ class Individual:
         slots: list[StageChoice] | tuple[StageChoice, ...],
         genotype: tuple[int, ...] | None = None,
         search_index: int | None = None,
+        design: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "Individual":
         return cls(
@@ -41,6 +43,7 @@ class Individual:
             slots=tuple(slots),
             genotype=genotype,
             search_index=search_index,
+            design=design or {},
             metadata=metadata or {},
         )
 

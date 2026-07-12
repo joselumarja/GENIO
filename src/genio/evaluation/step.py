@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
-from genio.core.artifact import Artifact
+from genio.artifacts import Artifact
 from genio.core.individual import Individual
 from genio.evaluation.task import EvaluationTask
 

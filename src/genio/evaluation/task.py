@@ -8,10 +8,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from genio.core.artifact import Artifact
+from genio.artifacts import Artifact
 from genio.core.individual import Individual
+
+if TYPE_CHECKING:
+    from genio.composer import ExecutionPackage
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,16 @@ class ExecutionContext:
 
     def artifact_path(self, task: EvaluationTask, *parts: str | Path) -> Path:
         return self.task_dir(task, "artifacts", *parts)
+
+    def package_dir(self, task: EvaluationTask, *parts: str | Path) -> Path:
+        return self.task_dir(task, "package", *parts)
+
+    def materialize_package(
+        self,
+        task: EvaluationTask,
+        package: ExecutionPackage,
+    ) -> Path:
+        return package.materialize(self.package_dir(task))
 
     def log_path(self, task: EvaluationTask, *parts: str | Path) -> Path:
         return self.task_dir(task, "logs", *parts)
