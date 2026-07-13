@@ -70,7 +70,23 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
         images_path = self._validate_configuration(context)
+        package, package_dir = self._compose_and_materialize(context)
+        samples = self._build_dataset(context, images_path)
 
+        self._write_dataset_manifest(context, package_dir, samples)
+        executions = self._execute_pipeline(context, package, package_dir, samples)
+
+        # Persist every sample outcome before reporting aggregate failures.
+        self._write_execution_manifest(context, executions)
+        self._raise_for_execution_failures(executions)
+
+        return [self._build_metrics_artifact(executions)]
+
+    def _compose_and_materialize(
+        self,
+        context: ExecutionContext,
+    ) -> tuple[PythonExecutionPackage, Path]:
+        assert self.composer is not None
         package = self.composer.compose(self.individual)
         if not isinstance(package, PythonExecutionPackage):
             raise TypeError(
@@ -87,8 +103,14 @@ class PythonImageFunctionalTask(EvaluationTask):
                 "metadata": dict(package.metadata),
             },
         )
+        return package, package_dir
 
-        samples = self._build_dataset(context, images_path)
+    @staticmethod
+    def _write_dataset_manifest(
+        context: ExecutionContext,
+        package_dir: Path,
+        samples: tuple[_ImageFunctionalSample, ...],
+    ) -> None:
         context.write_json(
             package_dir / "dataset_manifest.json",
             [
@@ -105,7 +127,11 @@ class PythonImageFunctionalTask(EvaluationTask):
             ],
         )
 
-        executions = self._execute_pipeline(context, package, package_dir, samples)
+    def _write_execution_manifest(
+        self,
+        context: ExecutionContext,
+        executions: tuple[_ImageFunctionalExecution, ...],
+    ) -> None:
         context.write_json(
             context.artifact_path(self, "execution_manifest.json"),
             [
@@ -128,6 +154,11 @@ class PythonImageFunctionalTask(EvaluationTask):
                 for execution in executions
             ],
         )
+
+    @staticmethod
+    def _raise_for_execution_failures(
+        executions: tuple[_ImageFunctionalExecution, ...],
+    ) -> None:
         failures = [execution for execution in executions if execution.error is not None]
         if failures:
             raise RuntimeError(
@@ -135,22 +166,23 @@ class PythonImageFunctionalTask(EvaluationTask):
                 f"{[execution.sample.id for execution in failures]!r}."
             )
 
+    def _build_metrics_artifact(
+        self,
+        executions: tuple[_ImageFunctionalExecution, ...],
+    ) -> ImageFunctionalMetricsArtifact:
         per_sample_metrics = self._compute_metrics(executions)
         values = self._aggregate_metrics(per_sample_metrics)
-
-        return [
-            ImageFunctionalMetricsArtifact(
-                name="image_functional_metrics",
-                producer=self.step_id or "python_image_functional",
-                individual_id=self.individual.id,
-                values=values,
-                per_sample_values=per_sample_metrics,
-                metadata={
-                    "metrics": self.metrics,
-                    "box_iou_threshold": self._BOX_IOU_THRESHOLD,
-                },
-            )
-        ]
+        return ImageFunctionalMetricsArtifact(
+            name="image_functional_metrics",
+            producer=self.step_id or "python_image_functional",
+            individual_id=self.individual.id,
+            values=values,
+            per_sample_values=per_sample_metrics,
+            metadata={
+                "metrics": self.metrics,
+                "box_iou_threshold": self._BOX_IOU_THRESHOLD,
+            },
+        )
 
     def _validate_configuration(self, context: ExecutionContext) -> Path:
         if self.composer is None:
@@ -234,6 +266,7 @@ class PythonImageFunctionalTask(EvaluationTask):
         if references_path is None:
             return None
 
+        # Prefer the exact filename, then a deterministic same-stem alternative.
         exact_match = references_path / image_path.name
         if exact_match.is_file():
             return exact_match
@@ -336,6 +369,7 @@ class PythonImageFunctionalTask(EvaluationTask):
             prediction = self._binary_mask(self._read_image(execution.output_path))
             reference = self._binary_mask(self._read_image(execution.sample.reference_path))
             if prediction.shape != reference.shape:
+                # Nearest-neighbor interpolation preserves discrete reference labels.
                 reference = self._resize_mask(reference, prediction.shape)
 
             sample_metrics = self._mask_metrics(prediction, reference)
@@ -462,6 +496,7 @@ class PythonImageFunctionalTask(EvaluationTask):
         pred_boxes: list[_BoundingBox],
         ref_boxes: list[_BoundingBox],
     ) -> list[tuple[int, int, float]]:
+        # Greedily select highest-IoU one-to-one matches above the threshold.
         candidates = sorted(
             (
                 (pred_index, ref_index, cls._box_iou(pred_box, ref_box))
@@ -502,6 +537,7 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _safe_div(numerator: float, denominator: float) -> float:
+        # Metric convention: every undefined 0/0 ratio evaluates to 1.0.
         if denominator == 0.0:
             return 1.0
         return numerator / denominator

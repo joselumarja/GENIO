@@ -483,6 +483,26 @@ def test_local_backend_provides_runtime_context_metadata(tmp_path):
     }
 
 
+def test_local_backend_provides_vitis_resource_paths(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    vitis_libraries_path = root / "Vitis_Libraries"
+    individual = Individual.from_slots(
+        id="individual_001",
+        scenario="context_space",
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+    task = ScoreTask(individual=individual, step_id="context")
+    backend = LocalBackend(
+        base_work_dir=tmp_path / "work",
+        vitis_libraries_path=vitis_libraries_path,
+    )
+
+    context = backend.create_context(task)
+
+    assert context.metadata["vitis_libraries_path"] == str(vitis_libraries_path.resolve())
+    assert "vitis_vision_include_path" not in context.metadata
+
+
 def test_execution_context_filesystem_helpers(tmp_path):
     individual = Individual.from_slots(
         id="individual_001",

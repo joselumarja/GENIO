@@ -34,6 +34,7 @@ def test_fifo_top_template_declares_xf_mat_pipeline_placeholders() -> None:
     assert "#define ROWS @ROWS@" in source
     assert "#define COLS @COLS@" in source
     assert "hls::stream<ap_uint<XF_PIXELWIDTH(TYPE, NPC)>>" in source
+    assert "hls::stream<ap_uint<XF_PIXELWIDTH(@OUTPUT_TYPE@, @OUTPUT_NPC@)>>" in source
     assert "fifo2xfMat<TYPE, ROWS, COLS, NPC>" in source
     assert "@PIPELINE_BODY@" in source
     assert "xfMat2fifo<@OUTPUT_TYPE@, @OUTPUT_ROWS@, @OUTPUT_COLS@, @OUTPUT_NPC@>" in source
@@ -51,3 +52,14 @@ def test_axi_stream_top_template_declares_interface_placeholders() -> None:
     assert "@PIPELINE_BODY@" in source
     assert "xfMat2axiStream<AXI_WIDTH, @OUTPUT_TYPE@" in source
     assert "output_mat" not in source
+
+
+def test_default_hls_config_template_exists() -> None:
+    source = (TEMPLATE_DIR / "hls_config.cfg").read_text(encoding="utf-8")
+
+    assert "part=" in source
+    assert "[hls]" in source
+    assert "clock=5" in source
+    assert "flow_target=vivado" in source
+    assert "syn.file=src/pipeline.cpp" in source
+    assert "syn.top=top" in source

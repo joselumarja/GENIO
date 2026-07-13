@@ -201,7 +201,7 @@ design_spaces: dict[str, dict[str, tuple[Any, ...]]]
 metadata: dict[str, Any]
 ```
 
-`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. Por ejemplo, un dominio `hls` puede ser usado por `HLSSynthesisEvaluationStep`, mientras que un dominio `system` puede ser usado por un futuro step de integración o evaluación de plataforma.
+`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. Por ejemplo, un dominio `hls` puede ser usado por `HLSImagePipelineSynthesisEvaluationStep`, mientras que un dominio `system` puede ser usado por un futuro step de integración o evaluación de plataforma.
 
 ### `SlotSpec`
 

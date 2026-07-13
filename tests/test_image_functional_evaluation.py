@@ -24,19 +24,8 @@ DEFINITIONS_PATH = ROOT / "search_space/stages/definitions"
 
 TEST = "insect_segmentation_pipeline.json"
 
-def test_python_image_functional_step_creates_task() -> None:
-    """search_space = SearchSpace.from_scenario(
-        SearchScenarioSpec(
-            id="image_functional_test",
-            slots=(
-                SlotSpec(
-                    index=0,
-                    alternatives=(StageChoice(slot=0, stage="nop"),),
-                ),
-            ),
-        )
-    )"""
 
+def test_python_image_functional_step_creates_task() -> None:
     search_space = SearchSpace(TESTS_PATH / TEST, DEFINITIONS_PATH)
     individual = search_space.from_index(0)
     step = PythonImageFunctionalEvaluationStep(
@@ -155,7 +144,7 @@ def test_python_image_functional_task_rejects_unknown_metrics(tmp_path) -> None:
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
-def test_python_image_functional_task_reaches_pending_runtime_after_validation(tmp_path) -> None:
+def test_python_image_functional_task_executes_composed_pipeline(tmp_path) -> None:
     images_path = tmp_path / "images"
     references_path = tmp_path / "references"
     images_path.mkdir()
@@ -356,15 +345,14 @@ def test_python_image_functional_task_requires_python_execution_package(tmp_path
 
 
 def test_python_image_functional_task_uses_real_insect_segmentation_search_space(tmp_path) -> None:
-    #images_path = tmp_path / "images"
-    #references_path = tmp_path / "references"
-    images_path = "/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Images"
-    references_path = "/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Masks"
-    #images_path.mkdir()
-    #references_path.mkdir()
-    #image = np.zeros((8, 8, 3), dtype=np.uint8)
-    #assert cv.imwrite(str(images_path / "sample.png"), image)
-    #assert cv.imwrite(str(references_path / "sample.png"), image)
+    images_path = tmp_path / "images"
+    references_path = tmp_path / "references"
+    images_path.mkdir()
+    references_path.mkdir()
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    reference = np.zeros((8, 8), dtype=np.uint8)
+    assert cv.imwrite(str(images_path / "sample.png"), image)
+    assert cv.imwrite(str(references_path / "sample.png"), reference)
 
     search_space = SearchSpace(TESTS_PATH / TEST, DEFINITIONS_PATH)
     individual = search_space.from_index(0)
@@ -373,7 +361,8 @@ def test_python_image_functional_task_uses_real_insect_segmentation_search_space
         composer=PythonImagePipelineComposer(DEFINITIONS_PATH),
         images_path=images_path,
         references_path=references_path,
-        metrics=("count_error",
+        metrics=(
+            "count_error",
             "instance_f1",
             "instance_precision",
             "instance_recall",
@@ -386,7 +375,8 @@ def test_python_image_functional_task_uses_real_insect_segmentation_search_space
             "mask_precision",
             "mask_recall",
             "mask_specificity",
-            "mean_box_iou",),
+            "mean_box_iou",
+        ),
     )
 
     assert search_space.scenario_id == "insect_segmentation_pipeline"

@@ -22,18 +22,15 @@ typedef ap_axiu<AXI_WIDTH, AXI_USER_WIDTH, AXI_ID_WIDTH, AXI_DEST_WIDTH> axi_wor
 
 void @TOP_FUNCTION@(
     hls::stream<axi_word_t>& input_stream,
-    hls::stream<axi_word_t>& output_stream,
-    int rows,
-    int cols
+    hls::stream<axi_word_t>& output_stream
 ) {
 #pragma HLS INTERFACE axis port=input_stream
 #pragma HLS INTERFACE axis port=output_stream
-#pragma HLS INTERFACE s_axilite port=rows bundle=control
-#pragma HLS INTERFACE s_axilite port=cols bundle=control
 #pragma HLS INTERFACE s_axilite port=return bundle=control
+@TOP_PRAGMAS@
 #pragma HLS DATAFLOW
 
-    xf::cv::Mat<TYPE, ROWS, COLS, NPC> input_mat(rows, cols);
+    xf::cv::Mat<TYPE, ROWS, COLS, NPC> input_mat(ROWS, COLS);
 
     axiStream2xfMat<AXI_WIDTH, TYPE, ROWS, COLS, NPC, AXI_USER_WIDTH, AXI_ID_WIDTH, AXI_DEST_WIDTH>(input_stream, input_mat);
 

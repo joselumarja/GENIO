@@ -5,9 +5,11 @@ import pytest
 from genio import (
     Composer,
     HLSExecutionPackage,
+    HLSImagePipelineComposer,
     Individual,
     PythonExecutionPackage,
     PythonImagePipelineComposer,
+    SearchSpace,
     StageChoice,
     StageDefinitionNotFoundError,
 )
@@ -80,6 +82,7 @@ def test_base_composer_exposes_active_choices_without_nop():
     individual = Individual.from_slots(
         id="individual_001",
         scenario="simple_threshold_pipeline",
+        design={"hls": {"npc": "XF_NPPC2", "pipeline_ii": 1, "use_uram": True}},
         slots=[
             StageChoice(slot=0, stage="nop"),
             StageChoice(
@@ -112,6 +115,7 @@ def test_base_composer_exposes_active_stage_definitions():
     individual = Individual.from_slots(
         id="individual_001",
         scenario="simple_threshold_pipeline",
+        design={"hls": {"npc": "XF_NPPC2", "pipeline_ii": 1, "use_uram": True}},
         slots=[
             StageChoice(
                 slot=0,
@@ -178,7 +182,7 @@ def test_hls_execution_package_materializes_files_and_metadata(tmp_path):
     package = HLSExecutionPackage(
         entrypoint="hls_config.cfg",
         files={
-            "hls_config.cfg": "part=xczu9eg-ffvb1156-2-e\n\n[hls]\nsyn.top=image_pipeline_top\n",
+            "hls_config.cfg": "part=xa7a100tcsg324-1I\n\n[hls]\nsyn.top=image_pipeline_top\n",
             "src/pipeline.cpp": "void image_pipeline_top() {}\n",
             "include/pipeline.hpp": "#pragma once\n",
         },
@@ -194,7 +198,7 @@ def test_hls_execution_package_materializes_files_and_metadata(tmp_path):
     assert package_dir == tmp_path / "package"
     assert package.entrypoint == "hls_config.cfg"
     assert (package_dir / "hls_config.cfg").read_text(encoding="utf-8").startswith(
-        "part=xczu9eg-ffvb1156-2-e"
+        "part=xa7a100tcsg324-1I"
     )
     assert (package_dir / "src/pipeline.cpp").read_text(encoding="utf-8") == (
         "void image_pipeline_top() {}\n"
@@ -264,3 +268,183 @@ def test_python_image_pipeline_composer_maps_morphology_shape_enums():
 
     assert "kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 3))" in source
     assert "'rect'" not in source
+
+
+def test_hls_image_pipeline_composer_generates_fifo_package():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=128,
+    )
+    individual = Individual.from_slots(
+        id="individual_001",
+        scenario="simple_threshold_pipeline",
+        design={"hls": {"npc": "XF_NPPC2", "pipeline_ii": 1, "use_uram": True}},
+        slots=[
+            StageChoice(slot=0, stage="bgr_to_gray"),
+            StageChoice(
+                slot=1,
+                stage="threshold",
+                parameters={
+                    "threshold": 120,
+                    "maxval": 255,
+                    "threshold_type": "binary",
+                },
+            ),
+        ],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert isinstance(package, HLSExecutionPackage)
+    assert package.entrypoint == "hls_config.cfg"
+    assert "part=" in package.files["hls_config.cfg"]
+    assert "package.output.format=ip_catalog" in package.files["hls_config.cfg"]
+    assert "package.output.syn=false" in package.files["hls_config.cfg"]
+    assert package.metadata["top_function"] == "top"
+    assert package.metadata["interface"] == "fifo"
+    assert package.metadata["include_dirs"] == ("include",)
+    assert package.metadata["required_backend_resources"] == ("vitis_libraries_path",)
+    assert package.metadata["output_type"] == "XF_8UC1"
+    assert "#define ROWS 64" in source
+    assert "#define COLS 128" in source
+    assert "#define NPC XF_NPPC2" in source
+    assert "#pragma HLS PIPELINE II=1" in source
+    assert "BIND_STORAGE variable=input_mat" not in source
+    assert "npc=" not in package.files["hls_config.cfg"]
+    assert "pipeline_ii=" not in package.files["hls_config.cfg"]
+    assert "use_uram=" not in package.files["hls_config.cfg"]
+    assert "#include \"imgproc/xf_cvt_color.hpp\"" in source
+    assert "#include \"imgproc/xf_threshold.hpp\"" in source
+    assert "hls::stream<ap_uint<XF_PIXELWIDTH(XF_8UC1, XF_NPPC2)>>& output_fifo" in source
+    assert "int rows" not in source
+    assert "int cols" not in source
+    assert "port=rows" not in source
+    assert "port=cols" not in source
+    assert "xf::cv::Mat<TYPE, ROWS, COLS, NPC> input_mat(ROWS, COLS);" in source
+    assert "xf::cv::Mat<XF_8UC1, 64, 128, XF_NPPC2> stage_0_output(64, 128);" in source
+    assert "xf::cv::bgr2gray<XF_8UC3, XF_8UC1, 64, 128, XF_NPPC2>(input_mat, stage_0_output);" in source
+    assert "xf::cv::Threshold<XF_THRESHOLD_TYPE_BINARY, XF_8UC1, 64, 128, XF_NPPC2>(stage_0_output, stage_1_output, 120, 255);" in source
+    assert "xfMat2fifo<XF_8UC1, 64, 128, XF_NPPC2>(stage_1_output, output_fifo);" in source
+
+
+def test_hls_image_pipeline_composer_generates_axi_stream_package():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        interface="axi_stream",
+        rows=32,
+        cols=32,
+        axi_width=64,
+        axi_user_width=1,
+        axi_id_width=0,
+        axi_dest_width=0,
+    )
+    individual = Individual.from_slots(
+        id="individual_001",
+        scenario="gray_pipeline",
+        slots=[StageChoice(slot=0, stage="bgr_to_gray")],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert package.metadata["interface"] == "axi_stream"
+    assert "include/xf_axi_stream_utils.hpp" in package.files
+    assert "#define AXI_WIDTH 64" in source
+    assert "#define AXI_USER_WIDTH 1" in source
+    assert "int rows" not in source
+    assert "int cols" not in source
+    assert "port=rows" not in source
+    assert "port=cols" not in source
+    assert "axiStream2xfMat<AXI_WIDTH, TYPE, ROWS, COLS, NPC" in source
+    assert "xfMat2axiStream<AXI_WIDTH, XF_8UC1, 32, 32, XF_NPPC1" in source
+
+
+def test_hls_image_pipeline_composer_substitutes_use_uram_token():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=128,
+    )
+    individual = Individual.from_slots(
+        id="individual_001",
+        scenario="resize_pipeline",
+        design={"hls": {"use_uram": True}},
+        slots=[
+            StageChoice(
+                slot=0,
+                stage="resize",
+                parameters={"out_rows": 32, "out_cols": 64, "interpolation": "area"},
+            ),
+        ],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert "xf::cv::resize<XF_INTERPOLATION_AREA, XF_8UC3, 64, 128, 32, 64, XF_NPPC1, true, 2>" in source
+    assert "@USE_URAM" not in source
+    assert "use_uram=" not in package.files["hls_config.cfg"]
+
+
+def test_hls_image_pipeline_composer_renders_insect_segmentation_sample():
+    search_space = SearchSpace(
+        ROOT / "search_space/tests/insect_segmentation_pipeline.json",
+        DEFINITIONS_PATH,
+    )
+    #individual = search_space.from_genotype(tuple(0 for _ in search_space.genotype_lengths))
+    individual = search_space.from_index(0)
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=2160,
+        cols=3840,
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert "xf::cv::resize" in source
+    assert "xf::cv::bgr2gray" in source
+    assert "#include \"imgproc/xf_duplicateimage.hpp\"" in source
+    assert "xf::cv::duplicateMat<XF_8UC1" in source
+    assert "xf::cv::equalizeHist" in source
+    assert "xf::cv::equalizeHist<XF_8UC1, 1080, 1920, XF_NPPC1, false>" in source
+    assert "xf::cv::Threshold" in source
+    assert "unsigned char kernel_" in source
+    assert "XF_INTERPOLATION_AREA" in source
+    assert "XF_SHAPE_RECT" in source
+    assert "@" not in source
+    assert package.metadata["output_type"] == "XF_8UC1"
+    assert package.metadata["npc"] == "XF_NPPC1"
+    assert package.metadata["hls_design"]["npc"] == "XF_NPPC1"
+
+
+def test_hls_image_pipeline_composer_uses_npc_from_design_space():
+    search_space = SearchSpace(
+        ROOT / "search_space/tests/insect_segmentation_pipeline.json",
+        DEFINITIONS_PATH,
+    )
+    genotype = [0 for _ in search_space.genotype_lengths]
+    npc_gene_index = len(search_space.slot_lengths) + tuple(
+        search_space.scenario.design_spaces["hls"]
+    ).index("npc")
+    genotype[npc_gene_index] = 1
+    individual = search_space.from_genotype(tuple(genotype))
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=2160,
+        cols=3840,
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert individual.design["hls"]["npc"] == "XF_NPPC2"
+    assert package.metadata["npc"] == "XF_NPPC2"
+    assert "#define NPC XF_NPPC2" in source

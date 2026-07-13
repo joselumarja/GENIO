@@ -7,6 +7,48 @@
       "masks": "proyecto_heredado/SolutionSearcher/Masks"
     }
   },
+  "design_spaces": {
+    "hls": {
+      "clock": {
+        "type": "choice",
+        "values": [5, 10]
+      },
+      "flow_target": {
+        "type": "constant",
+        "value": "vivado"
+      },
+      "npc": {
+        "type": "choice",
+        "values": ["XF_NPPC1", "XF_NPPC2"]
+      },
+      "pipeline_ii": {
+        "type": "choice",
+        "values": [1, 2, 3]
+      },
+      "use_uram": {
+        "type": "choice",
+        "values": [false]
+      }
+    },
+    "system": {
+      "platform": {
+        "type": "constant",
+        "value": "x-heep"
+      },
+      "mcu": {
+        "type": "choice",
+        "values": ["x-heep-small", "x-heep-big"]
+      },
+      "memory_size": {
+        "type": "choice",
+        "values": [65536, 131072, 262144]
+      },
+      "memory_type": {
+        "type": "choice",
+        "values": ["sram", "tcdm"]
+      }
+    }
+  },
   "pipeline": [
     {
       "slot": 0,

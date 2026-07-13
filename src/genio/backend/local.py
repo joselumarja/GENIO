@@ -19,9 +19,13 @@ class LocalBackend(Backend):
         base_work_dir: str | Path | None = None,
         run_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        vitis_libraries_path: str | Path | None = None,
     ) -> None:
         self.run_id = run_id or uuid4().hex
-        self.metadata = dict(metadata or {})
+        self.metadata = {
+            **dict(metadata or {}),
+            **self._vitis_metadata(vitis_libraries_path),
+        }
         self.base_work_dir = self._resolve_base_work_dir(base_work_dir)
         self._artifacts: dict[str, list[Artifact]] = {}
         self._states: dict[str, EvaluationState] = {}
@@ -79,3 +83,16 @@ class LocalBackend(Backend):
         path = Path(base_work_dir) if base_work_dir is not None else Path(mkdtemp(prefix="genio-"))
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @classmethod
+    def _vitis_metadata(
+        cls,
+        vitis_libraries_path: str | Path | None,
+    ) -> dict[str, str]:
+        if vitis_libraries_path is not None:
+            return {"vitis_libraries_path": cls._normalize_metadata_path(vitis_libraries_path)}
+        return {}
+
+    @staticmethod
+    def _normalize_metadata_path(path: str | Path) -> str:
+        return str(Path(path).expanduser().resolve())

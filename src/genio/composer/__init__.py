@@ -4,7 +4,7 @@ from genio.composer.base import (
     ExecutionPackage,
     StageDefinitionNotFoundError,
 )
-from genio.composer.hls import HLSExecutionPackage
+from genio.composer.hls import HLSExecutionPackage, HLSImagePipelineComposer
 from genio.composer.python import PythonExecutionPackage, PythonImagePipelineComposer
 
 __all__ = [
@@ -12,6 +12,7 @@ __all__ = [
     "ComposerError",
     "ExecutionPackage",
     "HLSExecutionPackage",
+    "HLSImagePipelineComposer",
     "PythonExecutionPackage",
     "PythonImagePipelineComposer",
     "StageDefinitionNotFoundError",
