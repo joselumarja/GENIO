@@ -14,9 +14,11 @@ class ImageFunctionalMetricsArtifact(MetricArtifact):
     per_sample_values: Mapping[str, Mapping[str, float]] = field(default_factory=dict)
 
     def load(self) -> tuple[Mapping[str, float]]:
+        """Return the aggregate metric mapping as the artifact payload."""
         return (self.values,)
 
     def metrics(self) -> Mapping[str, float]:
+        """Return the aggregate image evaluation metrics."""
         return self.values
 
 

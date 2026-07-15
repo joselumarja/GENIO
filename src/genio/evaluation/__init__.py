@@ -1,10 +1,13 @@
 from genio.evaluation.executor import EvaluationExecutor
 from genio.evaluation.hls_image_pipeline_synthesis import (
     HLSImagePipelineSynthesisConfigurationError,
+    HLSImagePipelineSynthesisError,
+    HLSImagePipelineSynthesisTimeoutError,
     HLSImagePipelineSynthesisEvaluationStep,
     HLSImagePipelineSynthesisTask,
 )
 from genio.evaluation.image_functional import (
+    ImageFunctionalQualityError,
     PythonImageFunctionalEvaluationStep,
     PythonImageFunctionalTask,
 )
@@ -17,8 +20,11 @@ __all__ = [
     "EvaluationStep",
     "EvaluationTask",
     "HLSImagePipelineSynthesisConfigurationError",
+    "HLSImagePipelineSynthesisError",
+    "HLSImagePipelineSynthesisTimeoutError",
     "HLSImagePipelineSynthesisEvaluationStep",
     "HLSImagePipelineSynthesisTask",
+    "ImageFunctionalQualityError",
     "PythonImageFunctionalEvaluationStep",
     "PythonImageFunctionalTask",
     "CommandResult",

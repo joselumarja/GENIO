@@ -1,5 +1,9 @@
+import subprocess
 import sys
+import time
 from pathlib import Path
+
+import pytest
 
 from genio import (
     Artifact,
@@ -301,8 +305,8 @@ def test_search_space_loads_real_test_file():
     )
 
     assert search_space.scenario_id == "simple_threshold_pipeline"
-    assert search_space.slot_lengths == (3, 19, 10)
-    assert search_space.search_space_size == 570
+    assert search_space.slot_lengths == (3, 19, 28)
+    assert search_space.search_space_size == 1596
 
     individual = search_space.from_genotype((1, 18, 0), id="loaded_001")
 
@@ -330,6 +334,7 @@ def test_optimization_session_coordinates_search_backend_and_statistics():
 
     result = OptimizationSession(
         id="threshold_optimization",
+        run_id="run_001",
         search_space=search_space,
         algorithm=algorithm,
         backend=LocalBackend(),
@@ -338,10 +343,16 @@ def test_optimization_session_coordinates_search_backend_and_statistics():
     ).run()
 
     assert result.session_id == "threshold_optimization"
+    assert result.run_id == "run_001"
     assert result.statistics == {"evaluations": 1, "batches": 1}
     assert len(result.evaluations) == 1
     assert result.evaluations[0].individual.id == "individual_001"
-    assert result.evaluations[0].metadata == {"batch_index": 0}
+    assert result.evaluations[0].metadata == {
+        "proposal_id": "run_001:000000",
+        "proposal_sequence": 0,
+        "batch_index": 0,
+        "batch_position": 0,
+    }
     assert result.evaluations[0].result.metrics == {"score.score": 0.0}
     assert result.best_individuals[0].id == "individual_001"
 
@@ -494,7 +505,7 @@ def test_local_backend_provides_vitis_resource_paths(tmp_path):
     task = ScoreTask(individual=individual, step_id="context")
     backend = LocalBackend(
         base_work_dir=tmp_path / "work",
-        vitis_libraries_path=vitis_libraries_path,
+        metadata={"vitis_libraries_path": str(vitis_libraries_path.resolve())},
     )
 
     context = backend.create_context(task)
@@ -570,6 +581,29 @@ def test_execution_context_run_command_can_skip_check(tmp_path):
     )
 
     assert result.returncode == 3
+
+
+def test_execution_context_timeout_terminates_child_processes(tmp_path):
+    context = ExecutionContext(base_work_dir=tmp_path)
+    marker_path = tmp_path / "child-survived.txt"
+    child_code = (
+        "import pathlib, time; "
+        "time.sleep(0.5); "
+        f"pathlib.Path({str(marker_path)!r}).write_text('alive', encoding='utf-8')"
+    )
+    parent_code = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        "print('child-started', flush=True); "
+        "time.sleep(5)"
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        context.run_command([sys.executable, "-c", parent_code], timeout=0.2)
+
+    assert "child-started" in (error.value.stdout or "")
+    time.sleep(0.6)
+    assert not marker_path.exists()
 
 
 def test_evaluation_executor_rejects_step_task_type_mismatch():

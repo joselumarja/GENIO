@@ -13,6 +13,8 @@ class ObjectiveError(Exception):
 
 
 class OptimizationDirection(str, Enum):
+    """Directions supported when optimizing an objective."""
+
     MAXIMIZE = "maximize"
     MINIMIZE = "minimize"
 
@@ -23,18 +25,22 @@ class Objective(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
+        """Return the unique name of the objective."""
         raise NotImplementedError
 
     @property
     @abstractmethod
     def direction(self) -> OptimizationDirection:
+        """Return the direction in which the objective is optimized."""
         raise NotImplementedError
 
     @abstractmethod
     def value(self, evaluation: Evaluation) -> float:
+        """Extract the objective value from an evaluation."""
         raise NotImplementedError
 
     def score(self, evaluation: Evaluation) -> float:
+        """Return a score normalized so that larger values are better."""
         value = self.value(evaluation)
         if self.direction is OptimizationDirection.MAXIMIZE:
             return value
@@ -51,13 +57,16 @@ class MetricObjective(Objective):
 
     @property
     def name(self) -> str:
+        """Return the configured identifier or metric name."""
         return self.id or self.metric
 
     @property
     def direction(self) -> OptimizationDirection:
+        """Return the configured optimization direction."""
         return self.optimization_direction
 
     def value(self, evaluation: Evaluation) -> float:
+        """Return the configured metric as a floating-point value."""
         try:
             value = evaluation.result.metrics[self.metric]
         except KeyError as exc:
@@ -85,12 +94,14 @@ class ObjectiveSet:
             raise ObjectiveError(msg)
 
     def values(self, evaluation: Evaluation) -> dict[str, float]:
+        """Return objective values keyed by objective name."""
         return {
             objective.name: objective.value(evaluation)
             for objective in self.objectives
         }
 
     def scores(self, evaluation: Evaluation) -> dict[str, float]:
+        """Return normalized objective scores keyed by objective name."""
         return {
             objective.name: objective.score(evaluation)
             for objective in self.objectives

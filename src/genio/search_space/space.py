@@ -71,6 +71,7 @@ class SearchSpace:
 
     @classmethod
     def from_scenario(cls, scenario: SearchScenarioSpec) -> "SearchSpace":
+        """Create a search space from an existing scenario specification."""
         search_space = cls.__new__(cls)
         search_space.scenario = scenario
         search_space._next_id = 0
@@ -103,22 +104,27 @@ class SearchSpace:
 
     @property
     def scenario_id(self) -> str:
+        """Return the identifier of the search scenario."""
         return self.scenario.id
 
     @property
     def slot_lengths(self) -> tuple[int, ...]:
+        """Return the number of alternatives in each pipeline slot."""
         return tuple(len(slot.alternatives) for slot in self.scenario.slots)
 
     @property
     def design_lengths(self) -> tuple[int, ...]:
+        """Return the number of values for each design parameter."""
         return tuple(len(values) for _, _, values in self._design_parameters())
 
     @property
     def genotype_lengths(self) -> tuple[int, ...]:
+        """Return the domain length of each genotype position."""
         return self.slot_lengths + self.design_lengths
 
     @property
     def search_space_size(self) -> int:
+        """Return the total number of individuals in the search space."""
         total = 1
         for length in self.genotype_lengths:
             total *= length
@@ -131,6 +137,7 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
+        """Create an individual from a mixed-radix genotype."""
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
@@ -160,6 +167,7 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
+        """Create an individual from its search-space index."""
         return self.from_genotype(
             self.index_to_genotype(search_index),
             id=id,
@@ -173,6 +181,7 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
+        """Create an individual from valid stage choices."""
         genotype = self.slots_to_genotype(tuple(slots))
         return self.from_genotype(genotype, id=id, metadata=metadata)
 
@@ -182,6 +191,7 @@ class SearchSpace:
         random: Random | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
+        """Sample an individual uniformly across genotype positions."""
         rng = random or Random()
         genotype = tuple(rng.randrange(length) for length in self.genotype_lengths)
         return self.from_genotype(genotype, metadata=metadata)
@@ -192,6 +202,7 @@ class SearchSpace:
         random: Random | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
+        """Sample an individual while balancing stage selection within each slot."""
         rng = random or Random()
         genotype = tuple(self._sample_balanced_gene(slot, rng) for slot in self.scenario.slots)
         genotype += tuple(rng.randrange(length) for length in self.design_lengths)
@@ -203,6 +214,7 @@ class SearchSpace:
         *,
         random: Random | None = None,
     ) -> tuple[StageChoice, int]:
+        """Sample an alternative and its gene from one slot."""
         rng = random or Random()
         slot = self._slot(slot_index)
         gene = rng.randrange(len(slot.alternatives))
@@ -214,6 +226,7 @@ class SearchSpace:
         *,
         random: Random | None = None,
     ) -> tuple[StageChoice, int]:
+        """Sample a stage-balanced alternative and its gene from one slot."""
         rng = random or Random()
         slot = self._slot(slot_index)
         gene = self._sample_balanced_gene(slot, rng)
@@ -228,6 +241,7 @@ class SearchSpace:
         metadata: dict[str, Any] | None = None,
         exclude_indexes: set[int] | None = None,
     ) -> list[Individual]:
+        """Sample a population of individuals from the search space."""
         return self._sample_population(
             size,
             unique=unique,
@@ -246,6 +260,7 @@ class SearchSpace:
         metadata: dict[str, Any] | None = None,
         exclude_indexes: set[int] | None = None,
     ) -> list[Individual]:
+        """Sample a population with stage-balanced slot selection."""
         return self._sample_population(
             size,
             unique=unique,
@@ -307,6 +322,7 @@ class SearchSpace:
         return self.scenario.slots[slot_index]
 
     def genotype_to_index(self, genotype: tuple[int, ...] | list[int]) -> int:
+        """Encode a genotype as its mixed-radix search-space index."""
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
@@ -316,6 +332,7 @@ class SearchSpace:
         return index
 
     def index_to_genotype(self, search_index: int) -> tuple[int, ...]:
+        """Decode a search-space index into its mixed-radix genotype."""
         if search_index < 0:
             raise ValueError("search_index cannot be negative.")
         if search_index >= self.search_space_size:
@@ -334,6 +351,7 @@ class SearchSpace:
         return tuple(reversed(genes))
 
     def slots_to_genotype(self, slots: tuple[StageChoice, ...]) -> tuple[int, ...]:
+        """Convert stage choices into their slot genotype."""
         if len(slots) != len(self.scenario.slots):
             raise ValueError(
                 f"Expected {len(self.scenario.slots)} slots, got {len(slots)}."
@@ -361,6 +379,7 @@ class SearchSpace:
         return tuple(genes)
 
     def to_index(self, individual: Individual) -> int:
+        """Return the search-space index of an individual."""
         if individual.scenario != self.scenario.id:
             raise ValueError(
                 f"Individual scenario {individual.scenario!r} does not match "
@@ -369,6 +388,7 @@ class SearchSpace:
         return self.genotype_to_index(self.to_genotype(individual))
 
     def to_genotype(self, individual: Individual) -> tuple[int, ...]:
+        """Return the genotype represented by an individual."""
         slot_genotype = self.slots_to_genotype(individual.slots)[: len(self.scenario.slots)]
         genotype = slot_genotype + self._design_to_genotype(individual.design)
         if individual.genotype is not None and individual.genotype != genotype:

@@ -14,3 +14,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "-m 'not hls_integration'"
+markers = [
+    "hls_integration: requires a local Vitis HLS installation",
+    "slow: long-running integration test",
+]

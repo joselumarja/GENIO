@@ -1,0 +1,197 @@
+{
+  "id": "tfg_pipeline",
+  "description": "Migrated fixed pipeline from the legacy SolutionSearcher TFG scenario.",
+  "legacy_source": "proyecto_heredado/SolutionSearcher/tests/TFG.json",
+  "resources": {
+    "datasets": {
+      "images": "proyecto_heredado/SolutionSearcher/Images",
+      "masks": "proyecto_heredado/SolutionSearcher/Masks"
+    }
+  },
+  "design_spaces": {
+    "hls": {
+      "clock": {
+        "type": "constant",
+        "value": 10
+      },
+      "flow_target": {
+        "type": "constant",
+        "value": "vivado"
+      },
+      "npc": {
+        "type": "constant",
+        "value": "XF_NPPC1"
+      },
+      "use_uram": {
+        "type": "constant",
+        "value": false
+      }
+    }
+  },
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 1280
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 720
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "candidates": [
+        {
+          "stage": "bgr_to_gray"
+        }
+      ]
+    },
+    {
+      "slot": 2,
+      "candidates": [
+        {
+          "stage": "hist_equalize"
+        }
+      ]
+    },
+    {
+      "slot": 3,
+      "candidates": [
+        {
+          "stage": "threshold",
+          "parameters": {
+            "threshold": {
+              "type": "constant",
+              "value": 12
+            },
+            "maxval": {
+              "type": "constant",
+              "value": 255
+            },
+            "threshold_type": {
+              "type": "constant",
+              "value": "binary_inv"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 4,
+      "candidates": [
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "constant",
+              "value": 3
+            },
+            "kernel_cols": {
+              "type": "constant",
+              "value": 3
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 5,
+      "candidates": [
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "constant",
+              "value": 3
+            },
+            "kernel_cols": {
+              "type": "constant",
+              "value": 3
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 6,
+      "candidates": [
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "constant",
+              "value": 3
+            },
+            "kernel_cols": {
+              "type": "constant",
+              "value": 3
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 7,
+      "candidates": [
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "constant",
+              "value": 3
+            },
+            "kernel_cols": {
+              "type": "constant",
+              "value": 3
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

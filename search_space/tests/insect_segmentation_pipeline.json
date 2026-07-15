@@ -1,6 +1,6 @@
 {
   "id": "insect_segmentation_pipeline",
-  "description": "Search space for insect segmentation using resize, grayscale preprocessing, inverse thresholding, morphology, connected components and area filtering.",
+  "description": "Search space for insect segmentation using resize, grayscale preprocessing, histogram equalization, inverse thresholding and configurable morphology.",
   "resources": {
     "datasets": {
       "images": "proyecto_heredado/SolutionSearcher/Images",

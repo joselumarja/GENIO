@@ -37,6 +37,7 @@ class Individual:
         design: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "Individual":
+        """Create an individual from an ordered collection of stage choices."""
         return cls(
             id=id,
             scenario=scenario,
@@ -48,7 +49,9 @@ class Individual:
         )
 
     def stage_sequence(self) -> tuple[str, ...]:
+        """Return the selected stage names in slot order."""
         return tuple(choice.stage for choice in self.slots)
 
     def parameters_by_slot(self) -> dict[int, dict[str, Any]]:
+        """Return the selected parameters keyed by slot index."""
         return {choice.slot: choice.parameters for choice in self.slots}

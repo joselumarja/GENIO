@@ -37,6 +37,10 @@ class _BoundingBox:
     y_max: int
 
 
+class ImageFunctionalQualityError(RuntimeError):
+    """Raised when a critical functional metric reports no useful quality."""
+
+
 @dataclass(frozen=True, slots=True)
 class PythonImageFunctionalTask(EvaluationTask):
     """Task that will execute a composed Python image-processing pipeline."""
@@ -60,6 +64,14 @@ class PythonImageFunctionalTask(EvaluationTask):
             "mean_box_iou",
         }
     )
+    _CRITICAL_ZERO_METRICS = frozenset(
+        {
+            "instance_f1",
+            "mask_accuracy",
+            "mask_f1",
+            "mask_iou",
+        }
+    )
     _BOX_IOU_THRESHOLD = 0.5
 
     composer: Composer | None = None
@@ -68,7 +80,14 @@ class PythonImageFunctionalTask(EvaluationTask):
     metrics: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def cache_inputs(self) -> Mapping[str, Any]:
+        """Cache functional results by the semantic image pipeline only."""
+
+        return {"pipeline": self._pipeline_cache_inputs()}
+
     def run(self, context: ExecutionContext) -> list[Artifact]:
+        """Execute the composed Python pipeline and return its functional metrics."""
+
         images_path = self._validate_configuration(context)
         package, package_dir = self._compose_and_materialize(context)
         samples = self._build_dataset(context, images_path)
@@ -80,7 +99,9 @@ class PythonImageFunctionalTask(EvaluationTask):
         self._write_execution_manifest(context, executions)
         self._raise_for_execution_failures(executions)
 
-        return [self._build_metrics_artifact(executions)]
+        metrics_artifact = self._build_metrics_artifact(executions)
+        self._raise_for_zero_critical_metrics(metrics_artifact.metrics())
+        return [metrics_artifact]
 
     def _compose_and_materialize(
         self,
@@ -183,6 +204,19 @@ class PythonImageFunctionalTask(EvaluationTask):
                 "box_iou_threshold": self._BOX_IOU_THRESHOLD,
             },
         )
+
+    @classmethod
+    def _raise_for_zero_critical_metrics(cls, metrics: Mapping[str, float]) -> None:
+        zero_metrics = sorted(
+            metric
+            for metric in cls._CRITICAL_ZERO_METRICS
+            if metrics.get(metric) == 0.0
+        )
+        if zero_metrics:
+            raise ImageFunctionalQualityError(
+                "Python image pipeline produced zero for critical functional metrics: "
+                f"{zero_metrics!r}."
+            )
 
     def _validate_configuration(self, context: ExecutionContext) -> Path:
         if self.composer is None:
@@ -568,6 +602,8 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
+        """Create a Python image functional evaluation task for an individual."""
+
         return PythonImageFunctionalTask(
             individual=individual,
             step_id=self.id,
@@ -583,6 +619,7 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
 
 
 __all__ = [
+    "ImageFunctionalQualityError",
     "PythonImageFunctionalEvaluationStep",
     "PythonImageFunctionalTask",
 ]

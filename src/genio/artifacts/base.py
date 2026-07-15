@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from copy import deepcopy
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, Sequence
 
 
@@ -29,6 +30,29 @@ class Artifact(ABC):
         can point to local or remote files and use fsspec internally to load
         them as in-memory objects, parsed reports, images, or file-like handles.
         """
+
+    def for_individual(
+        self,
+        individual_id: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "Artifact":
+        """Clone this artifact for another individual without moving its payload."""
+
+        cloned = deepcopy(self)
+        try:
+            return replace(
+                cloned,
+                individual_id=individual_id,
+                metadata={
+                    **deepcopy(cloned.metadata),
+                    **deepcopy(dict(metadata or {})),
+                },
+            )
+        except TypeError as exc:
+            raise ArtifactError(
+                f"Artifact type {type(self).__name__} cannot be rebound for caching."
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)

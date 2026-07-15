@@ -20,6 +20,8 @@ class PythonExecutionPackage(ExecutionPackage):
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def materialize(self, target_dir: str | Path) -> Path:
+        """Write the Python package to a target directory."""
+
         package_dir = Path(target_dir)
         package_dir.mkdir(parents=True, exist_ok=True)
 
@@ -64,6 +66,8 @@ class PythonImagePipelineComposer(Composer):
         self.implementation_source = implementation_source
 
     def compose(self, individual: Individual) -> PythonExecutionPackage:
+        """Compose an individual into a Python image pipeline package."""
+
         imports: list[str] = []
         body: list[str] = ["current = image"]
         metadata = self.artifact_metadata(individual)

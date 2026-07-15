@@ -20,6 +20,8 @@ class HLSExecutionPackage(ExecutionPackage):
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def materialize(self, target_dir: str | Path) -> Path:
+        """Write the HLS package to a target directory."""
+
         package_dir = Path(target_dir)
         package_dir.mkdir(parents=True, exist_ok=True)
 
@@ -57,6 +59,17 @@ class HLSImagePipelineComposer(Composer):
 
     _GRAYSCALE_STAGES = frozenset({"bgr_to_gray", "rgb_to_gray", "threshold", "in_range"})
     _MORPHOLOGY_STAGES = frozenset({"dilate", "erode", "morph_close", "morph_open"})
+    _SINGLE_CHANNEL_TYPES = {
+        "XF_8UC3": "XF_8UC1",
+        "XF_8UC4": "XF_8UC1",
+        "XF_14UC3": "XF_14UC1",
+        "XF_16UC3": "XF_16UC1",
+        "XF_16UC4": "XF_16UC1",
+    }
+    _GRADIENT_OUTPUT_TYPES = {
+        "XF_8UC1": "XF_16SC1",
+        "XF_8UC3": "XF_16SC3",
+    }
     _UNRESOLVED_TOKEN_PATTERN = re.compile(r"@[A-Za-z0-9_]+")
 
     def __init__(
@@ -89,6 +102,8 @@ class HLSImagePipelineComposer(Composer):
         self.axi_dest_width = axi_dest_width
 
     def compose(self, individual: Individual) -> HLSExecutionPackage:
+        """Compose an individual into a Vitis Vision HLS package."""
+
         hls_design = individual.design.get("hls", {})
         if not isinstance(hls_design, dict):
             raise ComposerError("Individual design domain 'hls' must be a mapping.")
@@ -141,8 +156,10 @@ class HLSImagePipelineComposer(Composer):
                 cols=input_cols,
                 image_type=input_type,
                 npc=input_npc,
+                output_type=output_type,
                 output_rows=output_rows,
                 output_cols=output_cols,
+                output_npc=output_npc,
                 stage_index=stage_index,
                 hls_design=hls_design,
             )
@@ -226,8 +243,10 @@ class HLSImagePipelineComposer(Composer):
         cols: str,
         image_type: str,
         npc: str,
+        output_type: str,
         output_rows: str,
         output_cols: str,
+        output_npc: str,
         stage_index: int,
         hls_design: Mapping[str, Any],
     ) -> dict[str, str]:
@@ -238,7 +257,9 @@ class HLSImagePipelineComposer(Composer):
             "@MAXDOWNSCALE": "2",
             "@NPC": npc,
             "@OUT_COLS": output_cols,
+            "@OUT_NPC": output_npc,
             "@OUT_ROWS": output_rows,
+            "@OUT_TYPE": output_type,
             "@ROWS": rows,
             "@TYPE": image_type,
             "@USE_URAM": self._hls_literal(hls_design.get("use_uram", False)),
@@ -366,7 +387,47 @@ class HLSImagePipelineComposer(Composer):
         output_cols = input_cols
         output_npc = input_npc
 
-        if choice.stage == "resize":
+        if choice.stage == "canny":
+            self._require_input_type(choice.stage, input_type, ("XF_8UC1",))
+            self._require_input_npc(choice.stage, input_npc, ("XF_NPPC1", "XF_NPPC8"))
+            self._require_divisible_cols(choice.stage, input_cols, 32)
+            output_type = "XF_2UC1"
+            output_npc = "XF_NPPC32"
+        elif choice.stage == "channel_extract":
+            try:
+                output_type = self._SINGLE_CHANNEL_TYPES[input_type]
+            except KeyError as exc:
+                supported = ", ".join(self._SINGLE_CHANNEL_TYPES)
+                raise ComposerError(
+                    f"Stage 'channel_extract' does not support input type {input_type!r}; "
+                    f"expected one of: {supported}."
+                ) from exc
+        elif choice.stage == "convert_scale_abs":
+            self._require_input_type(choice.stage, input_type, ("XF_8UC1",))
+            output_type = "XF_8UC1"
+        elif choice.stage == "remap":
+            self._require_input_type(choice.stage, input_type, ("XF_8UC1", "XF_8UC3"))
+            self._require_input_npc(
+                choice.stage,
+                input_npc,
+                ("XF_NPPC1", "XF_NPPC2", "XF_NPPC4", "XF_NPPC8"),
+            )
+            output_type = input_type
+        elif choice.stage in {"scharr", "sobel"}:
+            try:
+                output_type = self._GRADIENT_OUTPUT_TYPES[input_type]
+            except KeyError as exc:
+                supported = ", ".join(self._GRADIENT_OUTPUT_TYPES)
+                raise ComposerError(
+                    f"Stage {choice.stage!r} does not support input type {input_type!r}; "
+                    f"expected one of: {supported}."
+                ) from exc
+            self._require_input_npc(
+                choice.stage,
+                input_npc,
+                ("XF_NPPC1", "XF_NPPC8"),
+            )
+        elif choice.stage == "resize":
             output_rows = str(choice.parameters.get("out_rows", input_rows))
             output_cols = str(choice.parameters.get("out_cols", input_cols))
 
@@ -377,6 +438,42 @@ class HLSImagePipelineComposer(Composer):
             )
 
         return output_type, output_rows, output_cols, output_npc
+
+    @staticmethod
+    def _require_input_type(
+        stage: str,
+        input_type: str,
+        supported: tuple[str, ...],
+    ) -> None:
+        if input_type not in supported:
+            raise ComposerError(
+                f"Stage {stage!r} does not support input type {input_type!r}; "
+                f"expected one of: {', '.join(supported)}."
+            )
+
+    @staticmethod
+    def _require_input_npc(
+        stage: str,
+        input_npc: str,
+        supported: tuple[str, ...],
+    ) -> None:
+        if input_npc not in supported:
+            raise ComposerError(
+                f"Stage {stage!r} does not support NPC {input_npc!r}; "
+                f"expected one of: {', '.join(supported)}."
+            )
+
+    @staticmethod
+    def _require_divisible_cols(stage: str, cols: str, divisor: int) -> None:
+        try:
+            numeric_cols = int(cols)
+        except ValueError:
+            return
+        if numeric_cols % divisor != 0:
+            raise ComposerError(
+                f"Stage {stage!r} requires the input columns to be divisible by "
+                f"{divisor}; got {numeric_cols}."
+            )
 
     def _stage_pre_lines(
         self,

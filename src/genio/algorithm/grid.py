@@ -33,6 +33,7 @@ class GridSearch(SearchAlgorithm):
         self._evaluations: list[Evaluation] = []
 
     def ask(self, session) -> Sequence[Individual]:
+        """Return the next batch of individuals in search-index order."""
         if self._exhausted:
             return ()
         if self._next_index >= session.search_space.search_space_size:
@@ -59,9 +60,11 @@ class GridSearch(SearchAlgorithm):
         return individuals
 
     def tell(self, evaluations: Sequence[Evaluation]) -> None:
+        """Record completed evaluations."""
         self._evaluations.extend(evaluations)
 
     def should_stop(self) -> bool:
+        """Return whether the space or evaluation budget is exhausted."""
         if self._exhausted:
             return True
         return self.max_evaluations is not None and self._asked >= self.max_evaluations

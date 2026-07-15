@@ -21,4 +21,6 @@ class EvaluationStep(ABC):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
+        """Create an evaluation task for an individual and its artifacts."""
+
         raise NotImplementedError

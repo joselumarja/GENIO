@@ -17,9 +17,11 @@ class HLSReportArtifact(MetricArtifact):
     values: Mapping[str, float] = field(default_factory=dict)
 
     def load(self) -> Sequence[Any]:
+        """Return the report paths and parsed metric values."""
         return (self.report_paths, self.values)
 
     def metrics(self) -> Mapping[str, float]:
+        """Return metrics prefixed with the report origin."""
         return {f"{self.origin}.{key}": value for key, value in self.values.items()}
 
 
@@ -34,9 +36,11 @@ class HLSRTLArtifact(Artifact):
 
     @property
     def rtl_paths(self) -> tuple[Path, ...]:
+        """Return all generated RTL file paths."""
         return self.verilog_paths + self.vhdl_paths
 
     def load(self) -> Sequence[Any]:
+        """Return all generated RTL file paths."""
         return self.rtl_paths
 
 

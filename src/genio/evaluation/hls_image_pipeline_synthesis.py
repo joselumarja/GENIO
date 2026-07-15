@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,43 @@ from genio.evaluation.task import EvaluationTask, ExecutionContext
 
 class HLSImagePipelineSynthesisConfigurationError(ValueError):
     """Raised when an HLS image pipeline synthesis task is misconfigured."""
+
+
+class HLSImagePipelineSynthesisError(RuntimeError):
+    """Raised when the external HLS synthesis command fails."""
+
+    def __init__(
+        self,
+        command: tuple[str, ...],
+        returncode: int,
+        log_paths: tuple[Path, ...] = (),
+    ) -> None:
+        self.command = command
+        self.returncode = returncode
+        self.log_paths = log_paths
+        log_hint = f" See {log_paths[0]}." if log_paths else ""
+        super().__init__(
+            f"HLS command {command!r} failed with return code {returncode}.{log_hint}"
+        )
+
+
+class HLSImagePipelineSynthesisTimeoutError(TimeoutError):
+    """Raised when the external HLS synthesis command exceeds its timeout."""
+
+    def __init__(
+        self,
+        command: tuple[str, ...],
+        timeout_seconds: float,
+        log_paths: tuple[Path, ...] = (),
+    ) -> None:
+        self.command = command
+        self.timeout_seconds = timeout_seconds
+        self.log_paths = log_paths
+        log_hint = f" See {log_paths[0]}." if log_paths else ""
+        super().__init__(
+            f"HLS command {command!r} exceeded timeout of "
+            f"{timeout_seconds:g} seconds.{log_hint}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +85,17 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
     config_overrides: Mapping[str, str] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def cache_inputs(self) -> Mapping[str, Any]:
+        """Cache synthesis by pipeline and the HLS design domain."""
+
+        return {
+            "pipeline": self._pipeline_cache_inputs(),
+            "hls_design": self.individual.design.get("hls", {}),
+        }
+
     def run(self, context: ExecutionContext) -> list[Artifact]:
+        """Synthesize the composed HLS pipeline and return report and RTL artifacts."""
+
         self._validate_configuration(context)
 
         package = self._compose_and_materialize(context)
@@ -166,7 +214,47 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             self.work_dir_name,
         )
         # Keep control of failures so logs and command metadata are always persisted.
-        result = context.run_command(command, cwd=package_dir, check=False)
+        timeout_seconds = self.execution_timeout_seconds()
+        try:
+            result = context.run_command(
+                command,
+                cwd=package_dir,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout_path = context.write_log(
+                self,
+                "hls_stdout.log",
+                self._timeout_output(exc.stdout),
+            )
+            stderr_path = context.write_log(
+                self,
+                "hls_stderr.log",
+                self._timeout_output(exc.stderr),
+            )
+            tool_log_paths = self._tool_log_paths(work_dir)
+            context.write_json(
+                context.artifact_path(self, "hls_run_metadata.json"),
+                {
+                    "command": command,
+                    "status": "timeout",
+                    "returncode": None,
+                    "timeout_seconds": timeout_seconds,
+                    "cwd": str(package_dir),
+                    "work_dir": str(work_dir),
+                    "hls_config": str(hls_config_path),
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                    "tool_log_paths": tuple(str(path) for path in tool_log_paths),
+                },
+            )
+            assert timeout_seconds is not None
+            raise HLSImagePipelineSynthesisTimeoutError(
+                command=command,
+                timeout_seconds=timeout_seconds,
+                log_paths=tool_log_paths,
+            ) from exc
         stdout_path = context.write_log(self, "hls_stdout.log", result.stdout)
         stderr_path = context.write_log(self, "hls_stderr.log", result.stderr)
         tool_log_paths = self._tool_log_paths(work_dir)
@@ -174,7 +262,9 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             context.artifact_path(self, "hls_run_metadata.json"),
             {
                 "command": result.command,
+                "status": "success" if result.returncode == 0 else "failed",
                 "returncode": result.returncode,
+                "timeout_seconds": timeout_seconds,
                 "cwd": str(result.cwd) if result.cwd is not None else None,
                 "work_dir": str(work_dir),
                 "hls_config": str(hls_config_path),
@@ -184,12 +274,20 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             },
         )
         if result.returncode != 0:
-            log_hint = f" See {tool_log_paths[0]}." if tool_log_paths else ""
-            raise RuntimeError(
-                f"HLS command {result.command!r} failed with return code "
-                f"{result.returncode}.{log_hint}"
+            raise HLSImagePipelineSynthesisError(
+                command=result.command,
+                returncode=result.returncode,
+                log_paths=tool_log_paths,
             )
         return _HLSRunResult(work_dir=work_dir)
+
+    @staticmethod
+    def _timeout_output(output: str | bytes | None) -> str:
+        if output is None:
+            return ""
+        if isinstance(output, bytes):
+            return output.decode("utf-8", errors="replace")
+        return output
 
     @staticmethod
     def _tool_log_paths(work_dir: Path) -> tuple[Path, ...]:
@@ -278,7 +376,12 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
                     "Backend context must provide metadata['vitis_libraries_path'] "
                     "for Vitis Vision HLS packages."
                 )
-            vision_include_path = Path(str(vitis_libraries_path)) / "vision" / "L1" / "include"
+            vision_include_path = (
+                Path(str(vitis_libraries_path)).expanduser().resolve()
+                / "vision"
+                / "L1"
+                / "include"
+            )
             if not vision_include_path.exists():
                 raise HLSImagePipelineSynthesisConfigurationError(
                     "Vitis Vision include path does not exist: "
@@ -421,6 +524,11 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         if not self.hls_tool:
             raise HLSImagePipelineSynthesisConfigurationError("hls_tool cannot be empty.")
 
+        try:
+            self.execution_timeout_seconds()
+        except ValueError as exc:
+            raise HLSImagePipelineSynthesisConfigurationError(str(exc)) from exc
+
         if not self.work_dir_name:
             raise HLSImagePipelineSynthesisConfigurationError(
                 "work_dir_name cannot be empty."
@@ -508,6 +616,8 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
+        """Create an HLS image pipeline synthesis task for an individual."""
+
         return HLSImagePipelineSynthesisTask(
             individual=individual,
             step_id=self.id,
@@ -529,6 +639,8 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
 
 __all__ = [
     "HLSImagePipelineSynthesisConfigurationError",
+    "HLSImagePipelineSynthesisError",
+    "HLSImagePipelineSynthesisTimeoutError",
     "HLSImagePipelineSynthesisEvaluationStep",
     "HLSImagePipelineSynthesisTask",
 ]

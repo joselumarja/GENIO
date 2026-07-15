@@ -7,7 +7,17 @@ from genio.artifacts import (
     ImageFunctionalMetricsArtifact,
     MetricArtifact,
 )
-from genio.backend import Backend, EvaluationHandle, EvaluationState, LocalBackend
+from genio.backend import (
+    Backend,
+    BackendError,
+    BackendShutdownError,
+    EvaluationHandle,
+    EvaluationState,
+    LocalBackend,
+    ParallelLocalBackend,
+    UnknownEvaluationHandleError,
+)
+from genio.cache import ArtifactCache, CacheEntry, LFUArtifactCache
 from genio.composer import (
     Composer,
     ComposerError,
@@ -21,6 +31,7 @@ from genio.composer import (
 from genio.core import (
     Evaluation,
     Individual,
+    Proposal,
     Result,
     ResultStatus,
     SearchResult,
@@ -35,8 +46,11 @@ from genio.evaluation import (
     EvaluationWorkflowError,
     ExecutionContext,
     HLSImagePipelineSynthesisConfigurationError,
+    HLSImagePipelineSynthesisError,
+    HLSImagePipelineSynthesisTimeoutError,
     HLSImagePipelineSynthesisEvaluationStep,
     HLSImagePipelineSynthesisTask,
+    ImageFunctionalQualityError,
     PythonImageFunctionalEvaluationStep,
     PythonImageFunctionalTask,
 )
@@ -50,14 +64,19 @@ from genio.objective import (
 )
 from genio.search_space import SearchScenarioSpec, SearchSpace, SlotSpec
 from genio.session import OptimizationSession
-from genio.statistics import InMemoryStatistics, StatisticsCollector
+from genio.statistics import CSVStatisticsCollector, InMemoryStatistics, StatisticsCollector
 
 __all__ = [
     "Backend",
+    "BackendError",
+    "BackendShutdownError",
     "Artifact",
+    "ArtifactCache",
     "ArtifactError",
     "Composer",
     "ComposerError",
+    "CSVStatisticsCollector",
+    "CacheEntry",
     "CommandResult",
     "Evaluation",
     "EvaluationExecutor",
@@ -71,16 +90,20 @@ __all__ = [
     "ExecutionContext",
     "GridSearch",
     "HLSImagePipelineSynthesisConfigurationError",
+    "HLSImagePipelineSynthesisError",
+    "HLSImagePipelineSynthesisTimeoutError",
     "HLSImagePipelineSynthesisEvaluationStep",
     "HLSImagePipelineSynthesisTask",
     "HLSReportArtifact",
     "HLSRTLArtifact",
     "HLSExecutionPackage",
     "HLSImagePipelineComposer",
+    "ImageFunctionalQualityError",
     "ImageFunctionalMetricsArtifact",
     "InMemoryStatistics",
     "Individual",
     "LocalBackend",
+    "LFUArtifactCache",
     "MetricArtifact",
     "MetricObjective",
     "Objective",
@@ -88,6 +111,8 @@ __all__ = [
     "ObjectiveSet",
     "OptimizationSession",
     "OptimizationDirection",
+    "ParallelLocalBackend",
+    "Proposal",
     "PythonExecutionPackage",
     "PythonImagePipelineComposer",
     "PythonImageFunctionalEvaluationStep",
@@ -103,5 +128,6 @@ __all__ = [
     "StatisticsCollector",
     "StageDefinitionNotFoundError",
     "StageChoice",
+    "UnknownEvaluationHandleError",
     "dominates",
 ]

@@ -43,6 +43,10 @@ Individual[]
         ↓
 StatisticsCollector.on_batch_started(batch_index, individuals)
         ↓
+OptimizationSession asigna Proposal[] con id, secuencia y posicion
+        ↓
+StatisticsCollector.on_proposals_generated(proposals)
+        ↓
 OptimizationSession.evaluate(individuals)
         ↓
 EvaluationExecutor.evaluate_many(individuals)
@@ -77,13 +81,13 @@ EvaluationExecutor extrae metricas desde MetricArtifact como step_id.metric_name
         ↓
 Result.success(individual.id, metrics=accumulated_metrics)
         ↓
-OptimizationSession crea Evaluation(individual, result, metadata={"batch_index": batch_index})
+OptimizationSession crea Evaluation con metadata de Proposal
+        ↓
+StatisticsCollector.on_evaluation_completed(evaluation)
         ↓
 SearchAlgorithm.tell(evaluations)
         ↓
 SearchAlgorithm usa Objective/ObjectiveSet si su estrategia lo necesita
-        ↓
-StatisticsCollector.on_evaluation_completed(evaluation)
         ↓
 StatisticsCollector.on_batch_completed(batch_index, evaluations)
         ↓
@@ -130,7 +134,9 @@ OptimizationSession(
     evaluation_workflow: EvaluationWorkflow,
     statistics: StatisticsCollector | None = None,
     id: str | None = None,
+    run_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    artifact_cache: ArtifactCache | None = None,
 )
 ```
 
@@ -146,8 +152,10 @@ Responsabilidades:
 - Mantener referencias a `SearchSpace`, `SearchAlgorithm`, `Backend`, `EvaluationWorkflow`, `EvaluationExecutor` y `StatisticsCollector`.
 - Ejecutar el ciclo `ask/evaluate/tell`.
 - Delegar evaluaciones en `EvaluationExecutor`.
-- Convertir `Result` en `Evaluation` y anotar `batch_index` en `Evaluation.metadata` durante `run()`.
+- Asignar identidad unica y orden global a cada propuesta generada.
+- Convertir `Result` en `Evaluation` y anotar metadata de propuesta durante `run()`.
 - Notificar eventos a `StatisticsCollector`.
+- Crear el scope de una caché de artifacts por ejecución cuando se configura.
 - Construir y devolver `SearchResult`.
 
 ## 2. Dominio De Busqueda
@@ -274,6 +282,24 @@ stage_sequence() -> tuple[str, ...]
 parameters_by_slot() -> dict[int, dict[str, Any]]
 ```
 
+### `Proposal`
+
+Ubicacion: `src/genio/core/proposal.py`
+
+Representa una aparicion concreta de un individuo generada por `SearchAlgorithm.ask()`.
+
+Campos:
+
+```python
+proposal_id: str
+proposal_sequence: int
+batch_index: int | None
+batch_position: int
+individual: Individual
+```
+
+La identidad de propuesta pertenece a la ejecucion de busqueda y no modifica el diseño contenido en `Individual`.
+
 ### `Artifact`, `MetricArtifact` y `ArtifactError`
 
 Ubicacion: `src/genio/core/artifact.py`
@@ -337,6 +363,7 @@ individual_id: str
 status: ResultStatus
 metrics: dict[str, float]
 error: str | None
+metadata: dict[str, object]
 ```
 
 Metodos:
@@ -377,6 +404,7 @@ Campos:
 
 ```python
 session_id: str
+run_id: str | None
 evaluations: tuple[Evaluation, ...]
 best_individuals: tuple[Individual, ...]
 statistics: dict[str, Any]
@@ -717,6 +745,18 @@ Propiedad:
 task_id: str
 ```
 
+Configuracion de ejecucion opcional:
+
+```python
+metadata={
+    "execution": {
+        "timeout_seconds": 1800,
+    }
+}
+```
+
+El helper `execution_timeout_seconds()` valida y devuelve este valor. La task HLS lo aplica al comando `v++`; al agotarse persiste logs y metadata con estado `timeout`, y lanza `HLSImagePipelineSynthesisTimeoutError`.
+
 Metodo abstracto:
 
 ```python
@@ -753,6 +793,7 @@ Responsabilidades:
 
 - Normalizar la salida de comandos externos.
 - Facilitar logs, depuracion y generacion de artefactos desde stdout/stderr.
+- Ejecutar cada comando en un grupo de procesos aislado y terminarlo completo si expira.
 
 ### `Backend`
 
@@ -766,9 +807,11 @@ Interfaz:
 submit(task: EvaluationTask) -> EvaluationHandle
 submit_batch(tasks: Sequence[EvaluationTask]) -> list[EvaluationHandle]
 collect(handle: EvaluationHandle) -> list[Artifact]
+collect_batch(handles: Sequence[EvaluationHandle]) -> list[list[Artifact]]
 status(handle: EvaluationHandle) -> EvaluationState
 error(handle: EvaluationHandle) -> str | None
-cancel(handle: EvaluationHandle) -> None
+cancel(handle: EvaluationHandle) -> bool
+shutdown(wait: bool = True, cancel_futures: bool = False) -> None
 ```
 
 Responsabilidades:
@@ -781,6 +824,7 @@ Responsabilidades:
 - Exponer estado mediante `status`.
 - Exponer errores mediante `error`.
 - Ofrecer cancelacion mediante `cancel`.
+- Gestionar explicitamente el ciclo de vida mediante `shutdown` y context manager.
 
 No debe:
 
@@ -810,8 +854,51 @@ Responsabilidades:
 - Crear un `ExecutionContext` por task.
 - Ejecutar `task.run(context)` en el proceso actual.
 - Guardar artefactos en memoria.
-- Guardar estados `RUNNING`, `DONE`, `FAILED` y `CANCELLED`.
+- Guardar estados `RUNNING`, `DONE` y `FAILED`.
 - Registrar errores.
+- Devolver siempre un handle; los errores de la task se vuelven a lanzar desde `collect`.
+
+### `ParallelLocalBackend`
+
+Ubicacion: `src/genio/backend/parallel_local.py`
+
+Backend local concurrente basado en `ThreadPoolExecutor`.
+
+Constructor:
+
+```python
+ParallelLocalBackend(
+    max_workers: int,
+    max_pending: int | None = None,
+    base_work_dir: str | Path | None = None,
+    run_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+)
+```
+
+Responsabilidades:
+
+- Ejecutar hasta `max_workers` tasks locales simultaneas.
+- Limitar opcionalmente el numero de trabajos sin terminar mediante `max_pending`.
+- Mantener handles UUID, estados y errores protegidos frente a acceso concurrente.
+- Evitar dos tasks activas sobre el mismo workspace `individual/step`.
+- Cancelar tasks pendientes sin marcar falsamente como canceladas las que ya se ejecutan.
+- Conservar el orden de entrada al recoger batches.
+
+Los recursos requeridos por implementaciones concretas se proporcionan mediante
+`metadata`, no mediante argumentos especializados del backend. Por ejemplo:
+
+```python
+ParallelLocalBackend(
+    max_workers=2,
+    metadata={"vitis_libraries_path": "/path/to/Vitis_Libraries"},
+)
+```
+
+La task HLS interpreta esta ruta y deriva de ella `vision/L1/include`. Otras tasks
+pueden declarar y consumir sus propias rutas sin modificar la interfaz del backend.
+
+`EvaluationExecutor.evaluate_many` envia una ola por step del workflow. Los fallos de una task se convierten en `Result.failed` solo para su individual; ese individual no avanza a steps posteriores y el resto del batch continua. Los errores de contrato del framework siguen propagandose como excepciones.
 
 ### `EvaluationHandle`
 
@@ -878,7 +965,50 @@ Regla:
 
 `StageDefinitionNotFoundError` se lanza cuando un individuo referencia una etapa desconocida.
 
-## 10. Estadisticas
+## 10. Cache De Artifacts
+
+### `ArtifactCache`, `CacheEntry` y `LFUArtifactCache`
+
+Ubicacion:
+
+```text
+src/genio/cache/base.py
+src/genio/cache/lfu.py
+```
+
+La cache pertenece a `OptimizationSession`, se limpia al comenzar `run()` y es utilizada por `EvaluationExecutor` antes de enviar tasks al backend.
+
+Las tasks participan de forma opt-in:
+
+```python
+EvaluationTask.cache_inputs() -> Mapping[str, Any] | None
+```
+
+`None` mantiene la ejecucion normal. Las tasks funcional y HLS devuelven respectivamente:
+
+```text
+Python: pipeline
+HLS: pipeline + design.hls
+```
+
+`LFUArtifactCache` separa capacidades por `step.id`, expulsa la entrada con menor frecuencia y usa recencia como desempate. Los misses equivalentes de un mismo batch se agrupan y ejecutan mediante un unico representante.
+
+Los artifacts recuperados se clonan mediante `Artifact.for_individual()` y conservan referencias inmutables al payload original. Los fallos no se almacenan.
+
+Telemetria:
+
+```text
+hits
+misses
+stores
+evictions
+coalesced
+bypasses
+executions_avoided
+hit_rate
+```
+
+## 11. Estadisticas
 
 ### `StatisticsCollector`
 
@@ -891,13 +1021,16 @@ Interfaz:
 ```python
 on_session_started(session: OptimizationSession) -> None
 on_batch_started(batch_index: int, individuals: Sequence[Individual]) -> None
+on_proposals_generated(proposals: Sequence[Proposal]) -> None
 on_evaluation_completed(evaluation: Evaluation) -> None
 on_batch_completed(batch_index: int, evaluations: Sequence[Evaluation]) -> None
 on_session_completed(result: SearchResult) -> None
 snapshot() -> dict[str, Any]
 ```
 
-Los hooks de batch permiten registrar poblaciones o generaciones completas. El framework usa el termino `batch` porque no todos los algoritmos son generacionales; en algoritmos evolutivos un batch puede equivaler a una generacion.
+Los hooks de batch permiten registrar poblaciones completas. El framework usa el termino `batch` porque no todos los algoritmos son generacionales y un batch no debe interpretarse automaticamente como generacion.
+
+Cada `Proposal` identifica una aparicion concreta de un individuo mediante `proposal_id`, `proposal_sequence`, `batch_index` y `batch_position`. Esto permite distinguir genotipos repetidos, reevaluaciones y propuestas producidas por algoritmos evolutivos.
 
 ### `InMemoryStatistics`
 
@@ -910,6 +1043,21 @@ Snapshot actual:
 ```python
 {"evaluations": len(self.evaluations), "batches": len(self.batches)}
 ```
+
+### `CSVStatisticsCollector`
+
+Ubicacion: `src/genio/statistics/csv.py`
+
+Escribe una fila por propuesta en `individuals.csv`. Las filas se registran inicialmente como `not_evaluated` y se completan con estado, metricas y errores al terminar la evaluacion.
+
+Tambien genera:
+
+```text
+run_manifest.json
+run_summary.json
+```
+
+El CSV contiene representaciones JSON canonicas de genotype, pipeline, design y metadata, ademas de columnas promovidas para slots, dominios de diseño, metadata algorítmica y metricas.
 
 ## Diagrama De Relaciones
 

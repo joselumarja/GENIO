@@ -4,6 +4,7 @@ import pytest
 
 from genio import (
     Composer,
+    ComposerError,
     HLSExecutionPackage,
     HLSImagePipelineComposer,
     Individual,
@@ -363,6 +364,209 @@ def test_hls_image_pipeline_composer_generates_axi_stream_package():
     assert "xfMat2axiStream<AXI_WIDTH, XF_8UC1, 32, 32, XF_NPPC1" in source
 
 
+@pytest.mark.parametrize(
+    (
+        "stage",
+        "parameters",
+        "image_type",
+        "npc",
+        "expected_output_type",
+        "expected_output_npc",
+    ),
+    (
+        (
+            "canny",
+            {"low_threshold": 50, "high_threshold": 150},
+            "XF_8UC1",
+            "XF_NPPC1",
+            "XF_2UC1",
+            "XF_NPPC32",
+        ),
+        (
+            "channel_extract",
+            {"channel": 0},
+            "XF_8UC3",
+            "XF_NPPC1",
+            "XF_8UC1",
+            "XF_NPPC1",
+        ),
+        (
+            "channel_extract",
+            {"channel": 0},
+            "XF_16UC4",
+            "XF_NPPC1",
+            "XF_16UC1",
+            "XF_NPPC1",
+        ),
+        (
+            "convert_scale_abs",
+            {"alpha": 1.0, "beta": 0.0},
+            "XF_8UC1",
+            "XF_NPPC1",
+            "XF_8UC1",
+            "XF_NPPC1",
+        ),
+        (
+            "remap",
+            {"interpolation": "nearest"},
+            "XF_8UC3",
+            "XF_NPPC2",
+            "XF_8UC3",
+            "XF_NPPC2",
+        ),
+        (
+            "scharr",
+            {"border_type": "XF_BORDER_CONSTANT"},
+            "XF_8UC1",
+            "XF_NPPC8",
+            "XF_16SC1",
+            "XF_NPPC8",
+        ),
+        (
+            "sobel",
+            {"filter_width": 3, "border_type": "XF_BORDER_CONSTANT"},
+            "XF_8UC3",
+            "XF_NPPC1",
+            "XF_16SC3",
+            "XF_NPPC1",
+        ),
+    ),
+)
+def test_hls_image_pipeline_composer_resolves_output_type_and_npc(
+    stage,
+    parameters,
+    image_type,
+    npc,
+    expected_output_type,
+    expected_output_npc,
+):
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=128,
+        image_type=image_type,
+        npc=npc,
+    )
+    individual = Individual.from_slots(
+        id=f"{stage}_individual",
+        scenario=f"{stage}_pipeline",
+        slots=[StageChoice(slot=0, stage=stage, parameters=parameters)],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert package.metadata["output_type"] == expected_output_type
+    assert package.metadata["npc"] == expected_output_npc
+    assert (
+        f"xf::cv::Mat<{expected_output_type}, 64, 128, {expected_output_npc}> "
+        "stage_0_output(64, 128);"
+    ) in source
+    assert "@OUT_TYPE" not in source
+    assert "@OUT_NPC" not in source
+    assert (
+        f"xfMat2fifo<{expected_output_type}, 64, 128, {expected_output_npc}>"
+    ) in source
+
+
+@pytest.mark.parametrize(
+    ("stage", "parameters", "image_type", "npc", "error_match"),
+    (
+        (
+            "canny",
+            {"low_threshold": 50, "high_threshold": 150},
+            "XF_8UC3",
+            "XF_NPPC1",
+            "does not support input type",
+        ),
+        (
+            "canny",
+            {"low_threshold": 50, "high_threshold": 150},
+            "XF_8UC1",
+            "XF_NPPC2",
+            "does not support NPC",
+        ),
+        (
+            "channel_extract",
+            {"channel": 0},
+            "XF_8UC1",
+            "XF_NPPC1",
+            "does not support input type",
+        ),
+        (
+            "convert_scale_abs",
+            {"alpha": 1.0, "beta": 0.0},
+            "XF_8UC3",
+            "XF_NPPC1",
+            "does not support input type",
+        ),
+        (
+            "remap",
+            {"interpolation": "nearest"},
+            "XF_16UC1",
+            "XF_NPPC1",
+            "does not support input type",
+        ),
+        (
+            "sobel",
+            {"filter_width": 3, "border_type": "XF_BORDER_CONSTANT"},
+            "XF_8UC1",
+            "XF_NPPC2",
+            "does not support NPC",
+        ),
+    ),
+)
+def test_hls_image_pipeline_composer_rejects_invalid_output_state_inputs(
+    stage,
+    parameters,
+    image_type,
+    npc,
+    error_match,
+):
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=128,
+        image_type=image_type,
+        npc=npc,
+    )
+    individual = Individual.from_slots(
+        id=f"invalid_{stage}_individual",
+        scenario=f"invalid_{stage}_pipeline",
+        slots=[StageChoice(slot=0, stage=stage, parameters=parameters)],
+    )
+
+    with pytest.raises(ComposerError, match=error_match):
+        composer.compose(individual)
+
+
+def test_hls_image_pipeline_composer_requires_canny_columns_divisible_by_32():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=130,
+        image_type="XF_8UC1",
+        npc="XF_NPPC1",
+    )
+    individual = Individual.from_slots(
+        id="invalid_canny_columns",
+        scenario="canny_pipeline",
+        slots=[
+            StageChoice(
+                slot=0,
+                stage="canny",
+                parameters={"low_threshold": 50, "high_threshold": 150},
+            )
+        ],
+    )
+
+    with pytest.raises(ComposerError, match="divisible by 32"):
+        composer.compose(individual)
+
+
 def test_hls_image_pipeline_composer_substitutes_use_uram_token():
     composer = HLSImagePipelineComposer(
         DEFINITIONS_PATH,
@@ -396,7 +600,6 @@ def test_hls_image_pipeline_composer_renders_insect_segmentation_sample():
         ROOT / "search_space/tests/insect_segmentation_pipeline.json",
         DEFINITIONS_PATH,
     )
-    #individual = search_space.from_genotype(tuple(0 for _ in search_space.genotype_lengths))
     individual = search_space.from_index(0)
     composer = HLSImagePipelineComposer(
         DEFINITIONS_PATH,

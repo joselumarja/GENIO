@@ -15,3 +15,4 @@ class SearchResult:
     evaluations: tuple[Evaluation, ...]
     best_individuals: tuple[Individual, ...] = ()
     statistics: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None

@@ -5,7 +5,7 @@
   ],
   "function": [
     "kernel = cv.getStructuringElement(@K_SHAPE, (@K_COLS, @K_ROWS))",
-    "@output_0 = cv.morphologyEx(@input_0, cv2.MORPH_OPEN, kernel)"
+    "@output_0 = cv.morphologyEx(@input_0, cv.MORPH_OPEN, kernel)"
   ],
   "configuration": [
     "@K_SHAPE",

@@ -7,11 +7,18 @@ import pytest
 from genio import Composer
 from genio import ExecutionPackage
 from genio import ExecutionContext
+from genio import EvaluationExecutor
+from genio import EvaluationStep
+from genio import EvaluationTask
+from genio import EvaluationWorkflow
 from genio import ImageFunctionalMetricsArtifact
+from genio import ImageFunctionalQualityError
+from genio import LocalBackend
 from genio import PythonImageFunctionalEvaluationStep
 from genio import PythonImageFunctionalTask
 from genio import PythonExecutionPackage
 from genio import PythonImagePipelineComposer
+from genio import ResultStatus
 from genio import SearchScenarioSpec
 from genio import SearchSpace
 from genio import SlotSpec
@@ -245,6 +252,83 @@ def test_python_image_functional_task_computes_mask_and_instance_metrics(tmp_pat
     }
 
 
+def test_python_image_functional_task_rejects_zero_critical_metrics(tmp_path) -> None:
+    images_path = tmp_path / "images"
+    references_path = tmp_path / "references"
+    images_path.mkdir()
+    references_path.mkdir()
+    prediction = np.zeros((8, 8), dtype=np.uint8)
+    reference = np.full((8, 8), 255, dtype=np.uint8)
+    assert cv.imwrite(str(images_path / "sample.png"), prediction)
+    assert cv.imwrite(str(references_path / "sample.png"), reference)
+    task = PythonImageFunctionalTask(
+        individual=make_individual(),
+        composer=DummyComposer(tmp_path),
+        images_path=images_path,
+        references_path=references_path,
+        metrics=("mask_accuracy", "mask_f1", "mask_iou", "instance_f1"),
+    )
+
+    with pytest.raises(ImageFunctionalQualityError, match="critical functional metrics"):
+        task.run(ExecutionContext(base_work_dir=tmp_path))
+
+    execution_manifest = (
+        tmp_path / task.individual.id / "task" / "artifacts" / "execution_manifest.json"
+    )
+    assert execution_manifest.is_file()
+
+
+def test_zero_critical_metric_stops_dependent_workflow_step(tmp_path) -> None:
+    images_path = tmp_path / "images"
+    references_path = tmp_path / "references"
+    images_path.mkdir()
+    references_path.mkdir()
+    assert cv.imwrite(
+        str(images_path / "sample.png"),
+        np.zeros((8, 8), dtype=np.uint8),
+    )
+    assert cv.imwrite(
+        str(references_path / "sample.png"),
+        np.full((8, 8), 255, dtype=np.uint8),
+    )
+    downstream_marker = tmp_path / "hls_was_executed"
+
+    class DownstreamTask(EvaluationTask):
+        def run(self, context: ExecutionContext):
+            downstream_marker.write_text("executed", encoding="utf-8")
+            return []
+
+    class DownstreamStep(EvaluationStep):
+        id = "hls_stub"
+        depends_on = ("python_image_functional",)
+        task_type = DownstreamTask
+
+        def create_task(self, individual, artifacts):
+            return DownstreamTask(individual=individual, step_id=self.id)
+
+    workflow = EvaluationWorkflow(
+        (
+            PythonImageFunctionalEvaluationStep(
+                composer=DummyComposer(tmp_path),
+                images_path=images_path,
+                references_path=references_path,
+                metrics=("mask_iou",),
+            ),
+            DownstreamStep(),
+        )
+    )
+    executor = EvaluationExecutor(
+        workflow,
+        LocalBackend(base_work_dir=tmp_path / "work"),
+    )
+
+    result = executor.evaluate(make_individual())
+
+    assert result.status is ResultStatus.FAILED
+    assert "ImageFunctionalQualityError" in str(result.error)
+    assert not downstream_marker.exists()
+
+
 def test_python_image_functional_task_computes_pixel_error_rates(tmp_path) -> None:
     images_path = tmp_path / "images"
     references_path = tmp_path / "references"
@@ -350,7 +434,7 @@ def test_python_image_functional_task_uses_real_insect_segmentation_search_space
     images_path.mkdir()
     references_path.mkdir()
     image = np.zeros((8, 8, 3), dtype=np.uint8)
-    reference = np.zeros((8, 8), dtype=np.uint8)
+    reference = np.full((8, 8), 255, dtype=np.uint8)
     assert cv.imwrite(str(images_path / "sample.png"), image)
     assert cv.imwrite(str(references_path / "sample.png"), reference)
 

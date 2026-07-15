@@ -24,11 +24,15 @@ class ExecutionPackage(ABC):
     @property
     @abstractmethod
     def entrypoint(self) -> str:
+        """Return the package entrypoint."""
+
         raise NotImplementedError
 
     @property
     @abstractmethod
     def files(self) -> Mapping[str, str]:
+        """Return the files contained in the package."""
+
         raise NotImplementedError
 
     @abstractmethod
@@ -54,6 +58,8 @@ class Composer(ABC):
         """Generate backend-specific execution artifacts from an Individual."""
 
     def active_choices(self, individual: Individual) -> Iterator[StageChoice]:
+        """Yield the active stage choices for an individual."""
+
         for choice in individual.slots:
             if not self.should_skip(choice):
                 yield choice
@@ -62,13 +68,19 @@ class Composer(ABC):
         self,
         individual: Individual,
     ) -> Iterator[tuple[StageChoice, dict[str, Any]]]:
+        """Yield active stage choices with their definitions."""
+
         for choice in self.active_choices(individual):
             yield choice, self.stage_definition(choice.stage)
 
     def should_skip(self, choice: StageChoice) -> bool:
+        """Return whether a stage choice should be skipped."""
+
         return choice.stage == "nop"
 
     def stage_definition(self, stage: str) -> dict[str, Any]:
+        """Return the definition for a stage identifier."""
+
         try:
             return self.stage_definitions[stage]
         except KeyError as exc:
@@ -77,6 +89,8 @@ class Composer(ABC):
             ) from exc
 
     def artifact_metadata(self, individual: Individual) -> dict[str, Any]:
+        """Build common artifact metadata for an individual."""
+
         return {
             "composer": self.__class__.__name__,
             "scenario": individual.scenario,

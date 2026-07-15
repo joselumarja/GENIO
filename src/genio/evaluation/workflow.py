@@ -19,6 +19,8 @@ class EvaluationWorkflow:
         self._validate()
 
     def execution_order(self) -> tuple[EvaluationStep, ...]:
+        """Return evaluation steps in dependency order."""
+
         ordered: list[EvaluationStep] = []
         completed: set[str] = set()
 
@@ -39,6 +41,8 @@ class EvaluationWorkflow:
         return tuple(ordered)
 
     def ready_steps(self, completed: set[str]) -> tuple[EvaluationStep, ...]:
+        """Return steps whose dependencies have been completed."""
+
         return tuple(
             step
             for step in self.steps

@@ -34,6 +34,7 @@ class RandomSearch(SearchAlgorithm):
         self._evaluations: list[Evaluation] = []
 
     def ask(self, session) -> Sequence[Individual]:
+        """Sample the next batch within the remaining evaluation budget."""
         remaining = self.max_evaluations - self._asked
         if remaining <= 0:
             return ()
@@ -54,9 +55,11 @@ class RandomSearch(SearchAlgorithm):
         return tuple(individuals)
 
     def tell(self, evaluations: Sequence[Evaluation]) -> None:
+        """Record completed evaluations."""
         self._evaluations.extend(evaluations)
 
     def should_stop(self) -> bool:
+        """Return whether the evaluation budget is exhausted."""
         return self._asked >= self.max_evaluations
 
 

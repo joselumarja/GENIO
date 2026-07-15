@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from shutil import which
 
 from genio import ExecutionContext
 from genio import HLSExecutionPackage
@@ -6,8 +8,11 @@ from genio import HLSImagePipelineComposer
 from genio import HLSReportArtifact
 from genio import HLSRTLArtifact
 from genio import HLSImagePipelineSynthesisConfigurationError
+from genio import HLSImagePipelineSynthesisError
+from genio import HLSImagePipelineSynthesisTimeoutError
 from genio import HLSImagePipelineSynthesisEvaluationStep
 from genio import HLSImagePipelineSynthesisTask
+from genio import Individual
 from genio import SearchScenarioSpec
 from genio import SearchSpace
 from genio import SlotSpec
@@ -20,6 +25,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFINITIONS_PATH = ROOT / "search_space/stages/definitions"
 HLS_TEMPLATES_PATH = ROOT / "hls_templates/vitis_vision_image_pipeline"
 VITIS_LIBRARIES_PATH = ROOT / "Vitis_Libraries"
+REQUIRES_VITIS = pytest.mark.skipif(
+    which("v++") is None,
+    reason="Vitis v++ is required for HLS integration tests.",
+)
+REQUIRES_VITIS_LIBRARIES = pytest.mark.skipif(
+    not VITIS_LIBRARIES_PATH.is_dir(),
+    reason="Vitis_Libraries is required for image-pipeline synthesis tests.",
+)
 
 
 class DummyComposer:
@@ -93,6 +106,41 @@ def test_hls_image_pipeline_synthesis_step_creates_task() -> None:
     assert task.config_overrides == {"hls.flow_target": "vivado"}
 
 
+def test_hls_image_pipeline_synthesis_step_propagates_timeout_metadata() -> None:
+    step = HLSImagePipelineSynthesisEvaluationStep(
+        composer=PackageComposer(),
+        metadata={"execution": {"timeout_seconds": 1800}},
+    )
+
+    task = step.create_task(make_individual(), artifacts={})
+
+    assert task.execution_timeout_seconds() == 1800.0
+
+
+@pytest.mark.parametrize(
+    "execution_metadata",
+    (
+        [],
+        {"timeout_seconds": 0},
+        {"timeout_seconds": -1},
+        {"timeout_seconds": True},
+        {"timeout_seconds": "30"},
+    ),
+)
+def test_hls_image_pipeline_synthesis_rejects_invalid_timeout_metadata(
+    tmp_path,
+    execution_metadata,
+) -> None:
+    task = HLSImagePipelineSynthesisTask(
+        individual=make_individual(),
+        composer=DummyComposer(),
+        metadata={"execution": execution_metadata},
+    )
+
+    with pytest.raises(HLSImagePipelineSynthesisConfigurationError, match="metadata.execution"):
+        task.run(ExecutionContext(base_work_dir=tmp_path))
+
+
 def test_hls_image_pipeline_synthesis_task_requires_composer(tmp_path) -> None:
     task = HLSImagePipelineSynthesisTask(individual=make_individual())
 
@@ -114,6 +162,8 @@ def test_hls_image_pipeline_synthesis_task_validates_hls_config_path(tmp_path) -
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
 def test_hls_image_pipeline_synthesis_task_parses_report_from_config(tmp_path) -> None:
     config = tmp_path / "config.cfg"
     config.write_text("part=xa7a100tcsg324-1I\n\n[hls]\nclock=5\nflow_target=vivado\n", encoding="utf-8")
@@ -138,6 +188,8 @@ def test_hls_image_pipeline_synthesis_task_parses_report_from_config(tmp_path) -
     assert all(path.exists() for path in rtl.load())
 
 
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
 def test_hls_image_pipeline_synthesis_task_materializes_package(tmp_path) -> None:
     task = HLSImagePipelineSynthesisTask(
         individual=make_individual(),
@@ -179,6 +231,8 @@ def test_hls_image_pipeline_synthesis_task_materializes_package(tmp_path) -> Non
     assert "top.vhd" in {path.name for path in rtl.vhdl_paths}
 
 
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
 def test_hls_image_pipeline_synthesis_task_preserves_logs_on_failure(tmp_path) -> None:
     task = HLSImagePipelineSynthesisTask(
         individual=make_individual(),
@@ -186,8 +240,12 @@ def test_hls_image_pipeline_synthesis_task_preserves_logs_on_failure(tmp_path) -
         composer=PackageComposer(),
     )
 
-    with pytest.raises(RuntimeError, match="hls_compile.log"):
+    with pytest.raises(HLSImagePipelineSynthesisError, match="hls_compile.log") as error:
         task.run(ExecutionContext(base_work_dir=tmp_path))
+
+    assert error.value.returncode == 1
+    assert error.value.command[0] == "v++"
+    assert error.value.log_paths
 
     task_dir = tmp_path / task.individual.id / "hls_image_pipeline_synthesis"
     assert "HLS Build" in (task_dir / "logs/hls_stdout.log").read_text(encoding="utf-8")
@@ -195,6 +253,35 @@ def test_hls_image_pipeline_synthesis_task_preserves_logs_on_failure(tmp_path) -
     assert '"v++"' in metadata
     assert '"returncode": 1' in metadata
     assert "hls_compile.log" in metadata
+
+
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
+def test_hls_image_pipeline_synthesis_marks_real_vpp_timeout_as_failure(tmp_path) -> None:
+    task = HLSImagePipelineSynthesisTask(
+        individual=make_individual(),
+        step_id="hls_image_pipeline_synthesis",
+        composer=PackageComposer(),
+        part="xa7a100tcsg324-1I",
+        metadata={"execution": {"timeout_seconds": 0.01}},
+    )
+
+    with pytest.raises(
+        HLSImagePipelineSynthesisTimeoutError,
+        match="exceeded timeout",
+    ) as error:
+        task.run(ExecutionContext(base_work_dir=tmp_path))
+
+    assert error.value.timeout_seconds == 0.01
+    task_dir = tmp_path / task.individual.id / "hls_image_pipeline_synthesis"
+    metadata = json.loads(
+        (task_dir / "artifacts/hls_run_metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["status"] == "timeout"
+    assert metadata["returncode"] is None
+    assert metadata["timeout_seconds"] == 0.01
+    assert (task_dir / "logs/hls_stdout.log").is_file()
+    assert (task_dir / "logs/hls_stderr.log").is_file()
 
 
 def test_hls_image_pipeline_synthesis_task_requires_hls_package(tmp_path) -> None:
@@ -207,6 +294,8 @@ def test_hls_image_pipeline_synthesis_task_requires_hls_package(tmp_path) -> Non
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
 def test_hls_image_pipeline_synthesis_task_prepares_final_config(tmp_path) -> None:
     search_space = SearchSpace.from_scenario(
         SearchScenarioSpec(
@@ -290,6 +379,72 @@ def test_hls_image_pipeline_synthesis_requires_vitis_libraries(tmp_path) -> None
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
+@pytest.mark.parametrize(
+    ("stage", "parameters", "image_type", "expected_output_type"),
+    (
+        ("channel_extract", {"channel": 0}, "XF_8UC3", "XF_8UC1"),
+        (
+            "convert_scale_abs",
+            {"alpha": 1.0, "beta": 0.0},
+            "XF_8UC1",
+            "XF_8UC1",
+        ),
+    ),
+)
+def test_hls_image_pipeline_synthesis_supports_inferred_output_types(
+    tmp_path,
+    stage,
+    parameters,
+    image_type,
+    expected_output_type,
+) -> None:
+    individual = Individual.from_slots(
+        id=f"{stage}_output_type",
+        scenario=f"{stage}_pipeline",
+        slots=[StageChoice(slot=0, stage=stage, parameters=parameters)],
+    )
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=HLS_TEMPLATES_PATH,
+        rows=64,
+        cols=128,
+        image_type=image_type,
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        composer=composer,
+        part="xa7a100tcsg324-1I",
+    )
+
+    artifacts = task.run(
+        ExecutionContext(
+            base_work_dir=tmp_path,
+            metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH)},
+        )
+    )
+    report = hls_report_artifact(artifacts)
+    rtl = hls_rtl_artifact(artifacts)
+    source = (
+        tmp_path
+        / individual.id
+        / "hls_image_pipeline_synthesis"
+        / "package/src/pipeline.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert report.origin == "hls_synthesis"
+    assert rtl.top_function == "top"
+    assert "@OUT_TYPE" not in source
+    assert f"xfMat2fifo<{expected_output_type}, 64, 128, XF_NPPC1>" in source
+
+
+@pytest.mark.hls_integration
+@pytest.mark.slow
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
 def test_hls_image_pipeline_synthesis_with_insect_pipeline(tmp_path) -> None:
     search_space = SearchSpace(
         ROOT / "search_space/tests/insect_segmentation_pipeline.json",
