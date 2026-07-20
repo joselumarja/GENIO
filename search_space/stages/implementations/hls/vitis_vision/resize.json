@@ -3,9 +3,18 @@
   "include": [
     "imgproc/xf_resize.hpp"
   ],
-  "function": [
-    "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @USE_URAM, @MAXDOWNSCALE>(@input_0, @output_0);"
-  ],
+  "versions": {
+    "2023.1": {
+      "function": [
+        "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @MAXDOWNSCALE>(@input_0, @output_0);"
+      ]
+    },
+    "2025.2": {
+      "function": [
+        "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @USE_URAM, @MAXDOWNSCALE>(@input_0, @output_0);"
+      ]
+    }
+  },
   "configuration": [
     "@OUT_ROWS",
     "@OUT_COLS",

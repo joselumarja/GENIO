@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping
+import shlex
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,7 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         return {
             "pipeline": self._pipeline_cache_inputs(),
             "hls_design": self.individual.design.get("hls", {}),
+            "vitis_version": getattr(self.composer, "vitis_version", None),
         }
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
@@ -376,20 +378,61 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
                     "Backend context must provide metadata['vitis_libraries_path'] "
                     "for Vitis Vision HLS packages."
                 )
-            vision_include_path = (
-                Path(str(vitis_libraries_path)).expanduser().resolve()
-                / "vision"
-                / "L1"
-                / "include"
+            vision_include_path = context.resolve_resource_path(
+                str(vitis_libraries_path),
+                "vision",
+                "L1",
+                "include",
             )
-            if not vision_include_path.exists():
+            if not context.resource_exists(vision_include_path):
                 raise HLSImagePipelineSynthesisConfigurationError(
                     "Vitis Vision include path does not exist: "
                     f"{vision_include_path}."
                 )
+            if not context.resource_is_dir(vision_include_path):
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    "Vitis Vision include path is not a directory: "
+                    f"{vision_include_path}."
+                )
             include_flags.append(self._include_cflag(vision_include_path))
 
+        for include_path in self._execution_include_paths(context.metadata):
+            resolved_include_path = context.resolve_resource_path(include_path)
+            if not context.resource_exists(resolved_include_path):
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    f"Additional HLS include path does not exist: {resolved_include_path}."
+                )
+            if not context.resource_is_dir(resolved_include_path):
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    "Additional HLS include path is not a directory: "
+                    f"{resolved_include_path}."
+                )
+            include_flag = self._include_cflag(resolved_include_path)
+            if include_flag not in include_flags:
+                include_flags.append(include_flag)
+
         self._append_hls_cflags(config, include_flags)
+
+    @staticmethod
+    def _execution_include_paths(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+        values = metadata.get("hls_include_paths", ())
+        if isinstance(values, (str, Path)):
+            values = (values,)
+        elif not isinstance(values, Sequence) or isinstance(values, (bytes, bytearray)):
+            raise HLSImagePipelineSynthesisConfigurationError(
+                "metadata['hls_include_paths'] must be a path or a sequence of paths."
+            )
+
+        paths: list[str] = []
+        for value in values:
+            if not isinstance(value, (str, Path)) or not str(value).strip():
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    "metadata['hls_include_paths'] must contain only non-empty paths."
+                )
+            path = str(value)
+            if path not in paths:
+                paths.append(path)
+        return tuple(paths)
 
     @classmethod
     def _package_include_dirs(
@@ -415,7 +458,7 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             config["hls"] = {}
         hls_section = config["hls"]
         existing = str(hls_section.get("syn.cflags", "")).strip()
-        cflags = existing.split() if existing else []
+        cflags = shlex.split(existing, posix=False) if existing else []
         for flag in flags:
             if flag not in cflags:
                 cflags.append(flag)
@@ -610,6 +653,23 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
     config_overrides: Mapping[str, str] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     task_type: type[EvaluationTask] = HLSImagePipelineSynthesisTask
+
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return HLS tool, target, composer and execution configuration."""
+
+        return {
+            **EvaluationStep.checkpoint_signature(self),
+            "composer": self.composer,
+            "hls_tool": self.hls_tool,
+            "hls_config": self.hls_config,
+            "work_dir_name": self.work_dir_name,
+            "top_function": self.top_function,
+            "clock_period": self.clock_period,
+            "part": self.part,
+            "config_defaults": dict(self.config_defaults),
+            "config_overrides": dict(self.config_overrides),
+            "metadata": dict(self.metadata),
+        }
 
     def create_task(
         self,

@@ -1,7 +1,9 @@
 """Run a small random search over the insect segmentation pipeline."""
 
+import os
 from pathlib import Path
 from random import Random
+import re
 import sys
 
 
@@ -24,9 +26,30 @@ from genio import (  # noqa: E402
 )
 
 
+def active_vitis_version() -> str:
+    configured = os.environ.get("GENIO_VITIS_VERSION")
+    if configured:
+        return configured
+
+    vitis_root = os.environ.get("XILINX_VITIS")
+    if not vitis_root:
+        raise RuntimeError(
+            "Source the desired Vitis settings or set GENIO_VITIS_VERSION."
+        )
+    path = Path(vitis_root)
+    for candidate in (path.name, path.parent.name):
+        if re.fullmatch(r"20\d{2}\.\d+", candidate):
+            return candidate
+    raise RuntimeError(f"Cannot infer Vitis version from XILINX_VITIS={vitis_root!r}.")
+
+
+VITIS_VERSION = active_vitis_version()
 IMAGES_PATH = Path("/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Images")
 MASKS_PATH = Path("/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Masks")
-VITIS_LIBRARIES_PATH = ROOT / "Vitis_Libraries"
+VITIS_LIBRARIES_PATH = Path(
+    os.environ.get("VITIS_LIBRARIES_PATH", ROOT / "Vitis_Libraries")
+)
+HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
 OUTPUT_DIR = ROOT / "tmp/insect_random_search"
 
 MAX_EVALUATIONS = 10
@@ -37,7 +60,7 @@ SEED = 0
 ROWS = 2160
 COLS = 3840
 FPGA_PART = "xa7a100tcsg324-1I"
-HLS_TIMEOUT_SECONDS = 30 * 60
+HLS_TIMEOUT_SECONDS = 5 * 60
 
 
 def main() -> None:
@@ -57,6 +80,7 @@ def main() -> None:
         composer=HLSImagePipelineComposer(
             ROOT / "search_space/stages/definitions",
             templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+            vitis_version=VITIS_VERSION,
             rows=ROWS,
             cols=COLS,
         ),
@@ -80,7 +104,12 @@ def main() -> None:
     with ParallelLocalBackend(
         max_workers=MAX_WORKERS,
         base_work_dir=OUTPUT_DIR / "work",
-        metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH.resolve())},
+        metadata={
+            "vitis_libraries_path": str(VITIS_LIBRARIES_PATH.resolve()),
+            "hls_include_paths": [
+                str(HLS_IMPLEMENTATIONS_INCLUDE_PATH.resolve()),
+            ],
+        },
     ) as backend:
         result = OptimizationSession(
             id="insect_random_search",

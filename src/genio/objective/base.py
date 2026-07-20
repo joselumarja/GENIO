@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from numbers import Real
+from collections.abc import Mapping
+from typing import Any
 
 from genio.core.evaluation import Evaluation
 
@@ -46,6 +48,15 @@ class Objective(ABC):
             return value
         return -value
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return objective identity and direction for checkpoint compatibility."""
+
+        return {
+            "type": f"{type(self).__module__}.{type(self).__qualname__}",
+            "name": self.name,
+            "direction": self.direction.value,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class MetricObjective(Objective):
@@ -76,6 +87,15 @@ class MetricObjective(Objective):
             msg = f"Metric {self.metric!r} must be numeric, got {value!r}."
             raise ObjectiveError(msg)
         return float(value)
+
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return metric lookup and direction configuration."""
+
+        return {
+            **Objective.checkpoint_signature(self),
+            "metric": self.metric,
+            "id": self.id,
+        }
 
 
 @dataclass(frozen=True, slots=True)

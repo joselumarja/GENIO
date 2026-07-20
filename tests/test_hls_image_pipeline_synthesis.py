@@ -379,6 +379,99 @@ def test_hls_image_pipeline_synthesis_requires_vitis_libraries(tmp_path) -> None
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
+def test_hls_image_pipeline_synthesis_adds_execution_host_include_paths(
+    tmp_path,
+) -> None:
+    package_dir = tmp_path / "package"
+    (package_dir / "include").mkdir(parents=True)
+    custom_with_space = tmp_path / "custom includes"
+    custom_with_space.mkdir()
+    custom_common = tmp_path / "custom-common"
+    custom_common.mkdir()
+    context = ExecutionContext(
+        base_work_dir=tmp_path,
+        metadata={
+            "hls_include_paths": [
+                str(custom_with_space),
+                str(custom_common),
+                str(custom_with_space),
+            ]
+        },
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=make_individual(),
+        composer=PackageComposer(),
+    )
+    config = {"hls": {"syn.cflags": "-DKEEP=1"}}
+
+    task._apply_package_backend_config(
+        context,
+        package_dir,
+        {"include_dirs": ["include"]},
+        config,
+    )
+
+    assert config["hls"]["syn.cflags"] == (
+        f'-DKEEP=1 -Iinclude -I"{custom_with_space.resolve()}" '
+        f"-I{custom_common.resolve()}"
+    )
+
+
+def test_hls_image_pipeline_synthesis_accepts_single_custom_include_path(
+    tmp_path,
+) -> None:
+    custom_include = tmp_path / "custom"
+    custom_include.mkdir()
+
+    assert HLSImagePipelineSynthesisTask._execution_include_paths(
+        {"hls_include_paths": str(custom_include)}
+    ) == (str(custom_include),)
+
+
+@pytest.mark.parametrize(
+    "value",
+    (123, {"path": "/tmp/include"}, ["/tmp/include", ""]),
+)
+def test_hls_image_pipeline_synthesis_rejects_invalid_custom_include_metadata(
+    value,
+) -> None:
+    with pytest.raises(
+        HLSImagePipelineSynthesisConfigurationError,
+        match="hls_include_paths",
+    ):
+        HLSImagePipelineSynthesisTask._execution_include_paths(
+            {"hls_include_paths": value}
+        )
+
+
+@pytest.mark.parametrize("kind", ("missing", "file"))
+def test_hls_image_pipeline_synthesis_rejects_unusable_custom_include_path(
+    tmp_path,
+    kind,
+) -> None:
+    include_path = tmp_path / kind
+    if kind == "file":
+        include_path.write_text("not a directory", encoding="utf-8")
+    task = HLSImagePipelineSynthesisTask(
+        individual=make_individual(),
+        composer=PackageComposer(),
+    )
+
+    with pytest.raises(
+        HLSImagePipelineSynthesisConfigurationError,
+        match=("does not exist" if kind == "missing" else "not a directory"),
+    ):
+        task._apply_package_backend_config(
+            ExecutionContext(
+                base_work_dir=tmp_path,
+                metadata={"hls_include_paths": [str(include_path)]},
+            ),
+            tmp_path,
+            {},
+            {},
+        )
+
+
 @pytest.mark.hls_integration
 @REQUIRES_VITIS
 @REQUIRES_VITIS_LIBRARIES
@@ -442,6 +535,93 @@ def test_hls_image_pipeline_synthesis_supports_inferred_output_types(
 
 
 @pytest.mark.hls_integration
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
+def test_hls_image_pipeline_synthesis_supports_repository_custom_header(
+    tmp_path,
+) -> None:
+    individual = Individual.from_slots(
+        id="custom_identity",
+        scenario="custom_pipeline",
+        slots=[StageChoice(slot=0, stage="custom_identity")],
+    )
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=HLS_TEMPLATES_PATH,
+        rows=64,
+        cols=128,
+        image_type="XF_8UC1",
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        composer=composer,
+        part="xa7a100tcsg324-1I",
+    )
+
+    artifacts = task.run(
+        ExecutionContext(
+            base_work_dir=tmp_path,
+            metadata={
+                "vitis_libraries_path": str(VITIS_LIBRARIES_PATH),
+                "hls_include_paths": [
+                    str(ROOT / "hls_implementations/include"),
+                ],
+            },
+        )
+    )
+
+    assert hls_report_artifact(artifacts).origin == "hls_synthesis"
+    assert hls_rtl_artifact(artifacts).rtl_paths
+
+
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
+def test_hls_image_pipeline_synthesis_supports_versioned_resize_call(
+    tmp_path,
+) -> None:
+    individual = Individual.from_slots(
+        id="versioned_resize",
+        scenario="resize_pipeline",
+        slots=[
+            StageChoice(
+                slot=0,
+                stage="resize",
+                parameters={
+                    "out_rows": 32,
+                    "out_cols": 64,
+                    "interpolation": "area",
+                },
+            )
+        ],
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        composer=HLSImagePipelineComposer(
+            DEFINITIONS_PATH,
+            templates_path=HLS_TEMPLATES_PATH,
+            vitis_version="2025.2",
+            rows=64,
+            cols=128,
+            image_type="XF_8UC3",
+        ),
+        part="xa7a100tcsg324-1I",
+    )
+
+    artifacts = task.run(
+        ExecutionContext(
+            base_work_dir=tmp_path,
+            metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH)},
+        )
+    )
+
+    assert hls_report_artifact(artifacts).origin == "hls_synthesis"
+    assert hls_rtl_artifact(artifacts).rtl_paths
+
+
+@pytest.mark.hls_integration
 @pytest.mark.slow
 @REQUIRES_VITIS
 @REQUIRES_VITIS_LIBRARIES
@@ -466,7 +646,9 @@ def test_hls_image_pipeline_synthesis_with_insect_pipeline(tmp_path) -> None:
 
     context = ExecutionContext(
         base_work_dir=tmp_path,
-        metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH)},
+        metadata={
+            "vitis_libraries_path": str(VITIS_LIBRARIES_PATH),
+        },
     )
 
     artifacts = task.run(context)

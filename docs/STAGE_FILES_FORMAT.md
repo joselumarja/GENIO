@@ -865,7 +865,9 @@ Basado en `black_level_correction`:
 ```json
 {
   "stage": "black_level_correction",
-  "include": "imgproc/xf_black_level.hpp",
+  "include": [
+    "imgproc/xf_black_level.hpp"
+  ],
   "function": [
     "xf::cv::blackLevelCorrection<@TYPE, @ROWS, @COLS, @NPC, @MUL_VALUE_WIDTH, @FL_POS, @USE_DSP, @XFCVDEPTH_IN, @XFCVDEPTH_OUT>(@input_0, @output_0, @black_level, @MUL_VALUE);"
   ],
@@ -886,7 +888,10 @@ Basado en `black_level_correction`:
 }
 ```
 
-`source` es una ruta simplificada. Para localizar el archivo real se antepone:
+`source` documenta la procedencia de la implementación. No se usa para generar el
+`#include` ni para localizar el header durante la composición.
+
+Para implementaciones de Vitis Libraries puede ser una ruta relativa como:
 
 ```text
 Vitis_Libraries/
@@ -896,7 +901,12 @@ Ejemplo:
 
 ```text
 source: vision/L1/include/imgproc/xf_black_level.hpp
-archivo real: Vitis_Libraries/vision/L1/include/imgproc/xf_black_level.hpp
+```
+
+Para una implementación propia almacenada en este repositorio:
+
+```text
+source: hls_implementations/include/genio/identity.hpp
 ```
 
 ---
@@ -928,13 +938,63 @@ Solo en implementaciones funcionales.
 Solo en implementaciones HLS.
 
 ```json
-"include": "imgproc/xf_black_level.hpp"
+"include": [
+  "imgproc/xf_black_level.hpp",
+  "genio/custom_filter.hpp"
+]
 ```
 
-Corresponde normalmente a un header bajo:
+Cada elemento es el nombre portable escrito literalmente en el C++ generado:
+
+```cpp
+#include "imgproc/xf_black_level.hpp"
+#include "genio/custom_filter.hpp"
+```
+
+No es una ruta absoluta ni relativa al JSON. El compilador lo resuelve utilizando,
+en este orden:
 
 ```text
-Vitis_Libraries/vision/L1/include/
+1. Directorios include contenidos en el package.
+2. <vitis_libraries_path>/vision/L1/include.
+3. Rutas adicionales declaradas en metadata["hls_include_paths"].
+```
+
+Los nombres deben usar `/`, no pueden ser absolutos, contener `..`, comillas ni
+saltos de línea. La forma canónica es una lista; temporalmente se acepta un único
+string por compatibilidad.
+
+Los headers propios se almacenan actualmente bajo:
+
+```text
+hls_implementations/include/
+```
+
+Y se exponen en una sesión local mediante:
+
+```python
+metadata={
+    "vitis_libraries_path": str(VITIS_LIBRARIES_PATH),
+    "hls_include_paths": [
+        str(ROOT / "hls_implementations/include"),
+    ],
+}
+```
+
+En `SSHBackend` esas rutas pertenecen al host remoto y deben ser absolutas. Los
+headers no se copian al package: todos los workers deben disponer de las mismas
+rutas y revisiones.
+
+El ejecutable `v++` se resuelve desde `PATH`, configurado por el `source` de Vitis
+realizado antes de iniciar GENIO. La versión detectada se pasa al composer para
+seleccionar variantes declarativas de las llamadas que cambian entre releases.
+
+El script de búsqueda obtiene la versión desde `GENIO_VITIS_VERSION` o desde la
+ruta de `XILINX_VITIS`. El checkout compatible de Vitis Libraries puede indicarse
+sin cambiar código:
+
+```bash
+export VITIS_LIBRARIES_PATH=/opt/xilinx-libraries/Vitis_Libraries-2023.1
 ```
 
 ---
@@ -942,6 +1002,18 @@ Vitis_Libraries/vision/L1/include/
 ## 3.6 `function`
 
 Lista ordenada de líneas de código o llamada HLS.
+
+Las implementaciones usan tokens sin `@` final:
+
+```text
+@TYPE
+@ROWS
+@input_0
+@output_0
+```
+
+Esta sintaxis es distinta de los placeholders de los templates top, que están
+delimitados en ambos extremos, por ejemplo `@TOP_FUNCTION@` y `@ROWS@`.
 
 Reglas actuales:
 
@@ -962,6 +1034,62 @@ Ejemplo correcto:
 ```
 
 `ksize` es local; `@input_0` y `@output_0` son puertos.
+
+Una función propia header-only utiliza exactamente la misma sintaxis:
+
+```json
+{
+  "stage": "custom_identity",
+  "include": [
+    "genio/identity.hpp"
+  ],
+  "function": [
+    "genio::identity<@TYPE, @ROWS, @COLS, @NPC>(@input_0, @output_0);"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@COLS": "Maximum input width.",
+    "@NPC": "Pixels per clock.",
+    "@ROWS": "Maximum input height.",
+    "@TYPE": "Vitis Vision image type.",
+    "@input_0": "Input matrix.",
+    "@output_0": "Output matrix."
+  },
+  "source": "hls_implementations/include/genio/identity.hpp"
+}
+```
+
+La configuración variable debe expresarse como argumentos template C++ o argumentos
+normales de función. Los headers propios son código C++ en crudo y no se renderizan.
+
+Una implementación puede declarar variantes cuando la firma de Vitis Vision cambia:
+
+```json
+{
+  "stage": "resize",
+  "include": [
+    "imgproc/xf_resize.hpp"
+  ],
+  "versions": {
+    "2023.1": {
+      "function": [
+        "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @MAXDOWNSCALE>(@input_0, @output_0);"
+      ]
+    },
+    "2025.2": {
+      "function": [
+        "xf::cv::resize<@INTERPOLATION, @TYPE, @ROWS, @COLS, @OUT_ROWS, @OUT_COLS, @NPC, @USE_URAM, @MAXDOWNSCALE>(@input_0, @output_0);"
+      ]
+    }
+  },
+  "source": "vision/L1/include/imgproc/xf_resize.hpp"
+}
+```
+
+El composer combina los campos comunes con `versions[vitis_version]`. Puede usarse
+una variante `default` para APIs estables; si no existe coincidencia exacta ni
+`default`, la composición falla antes de invocar Vitis. El header y la implementación
+real siguen perteneciendo a Vitis Libraries; GENIO solo selecciona la invocación.
 
 ---
 

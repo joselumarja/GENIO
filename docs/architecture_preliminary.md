@@ -137,6 +137,7 @@ OptimizationSession(
     run_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     artifact_cache: ArtifactCache | None = None,
+    checkpoint_policy: CheckpointPolicy | None = None,
 )
 ```
 
@@ -145,6 +146,7 @@ Interfaz:
 ```python
 run() -> SearchResult
 evaluate(individuals: Sequence[Individual]) -> list[Evaluation]
+save_checkpoint() -> Path | None
 ```
 
 Responsabilidades:
@@ -156,7 +158,75 @@ Responsabilidades:
 - Convertir `Result` en `Evaluation` y anotar metadata de propuesta durante `run()`.
 - Notificar eventos a `StatisticsCollector`.
 - Crear el scope de una caché de artifacts por ejecución cuando se configura.
+- Guardar y restaurar checkpoints consistentes entre batches cuando existe una policy.
 - Construir y devolver `SearchResult`.
+
+### Checkpoints De Sesion
+
+Ubicacion: `src/genio/checkpoint/`
+
+El algoritmo declara como serializar su estado, pero `OptimizationSession` controla
+el momento de persistencia. Los checkpoints automaticos se crean exclusivamente tras
+completar `tell()` y `StatisticsCollector.on_batch_completed()`.
+
+```python
+session = OptimizationSession(
+    ...,
+    checkpoint_policy=CheckpointPolicy(
+        directory=Path("tmp/checkpoints"),
+        every_batches=1,
+        keep_last=3,
+        save_on_completion=True,
+    ),
+)
+```
+
+Para continuar una ejecucion:
+
+```python
+session = OptimizationSession(
+    ...,
+    run_id=None,
+    checkpoint_policy=CheckpointPolicy(
+        directory=Path("tmp/checkpoints"),
+        resume_from=Path("tmp/checkpoints/latest.json"),
+    ),
+)
+```
+
+`latest.json` es un manifest que referencia un snapshot inmutable. Cada snapshot y
+el manifest se escriben mediante `fsync` y reemplazo atomico, incluyen checksums y
+se crean con permisos restrictivos. `keep_last` limita snapshots antiguos sin borrar
+el snapshot publicado actualmente.
+
+El payload contiene:
+
+- Estado versionado del algoritmo y su RNG.
+- Estado del asignador de IDs de `SearchSpace`.
+- Evaluaciones comprometidas y metadata de propuestas.
+- Siguiente batch y siguiente secuencia de propuesta.
+- Estado del collector de estadisticas.
+- `session_id`, `run_id` y estado terminal o en ejecucion.
+
+Antes de restaurar se validan fingerprints de:
+
+- Configuracion y tipo del algoritmo.
+- Estructura ordenada completa del search space.
+- Workflow, steps, composers, definiciones y templates.
+- Backend y metadata de contexto.
+- Collector de estadisticas y metadata de sesion.
+- `compatibility_tag` opcional proporcionado por el experimento.
+
+`SearchAlgorithm`, `StatisticsCollector`, `EvaluationStep`, `Composer` y `Backend`
+exponen metodos `checkpoint_signature()` para declarar configuracion relevante. Los
+algoritmos implementados exponen ademas `checkpoint_state()` y
+`restore_checkpoint_state(...)`.
+
+La primera version no persiste batches en curso, handles, procesos ni conexiones.
+Una interrupcion durante un batch restaura el ultimo batch completo y repite el
+siguiente con los mismos IDs y estado RNG. Tampoco se permite todavia combinar
+checkpoints con `ArtifactCache`, porque restaurar sin sus entries cambiaria la
+trayectoria observable de ejecucion.
 
 ## 2. Dominio De Busqueda
 
@@ -436,6 +506,81 @@ Responsabilidades:
 - Decidir cuando detenerse.
 - Exponer mejores individuos.
 
+### `GeneticSearch`
+
+Ubicacion: `src/genio/algorithm/genetic.py`
+
+Adaptacion generacional del explorador genetico heredado al contrato `ask/tell`.
+Una llamada a `ask()` produce una poblacion completa y `tell()` exige exactamente
+las evaluaciones de esa poblacion antes de permitir la siguiente generacion.
+
+Constructor:
+
+```python
+GeneticSearch(
+    objectives: Objective | ObjectiveSet,
+    weights: Mapping[str, float] | None = None,
+    population_size: int = 80,
+    mutation_probability: float = 0.05,
+    max_generations: int = 20,
+    start_generation: int = 1,
+    balanced_initialization: bool = True,
+    initial_population: Sequence[Sequence[int]] | None = None,
+    random: Random | None = None,
+)
+```
+
+Proceso por generacion:
+
+1. Normalizar cada objetivo independientemente mediante min-max entre individuos exitosos.
+2. Orientar objetivos para que valores mayores de fitness sean siempre mejores.
+3. Combinar objetivos usando pesos relativos normalizados.
+4. Asignar fitness cero a evaluaciones fallidas.
+5. Descartar de la ruleta fitness inferiores a la mediana de la poblacion.
+6. Seleccionar el primer padre por ruleta y el segundo media vuelta despues.
+7. Generar hermanos complementarios mediante crossover uniforme por gen.
+8. Aplicar a cada hijo una sustitucion de un unico gen con la probabilidad configurada.
+9. Reemplazar por completo la poblacion anterior, sin elitismo.
+
+La inicializacion y la mutacion de genes de pipeline usan muestreo balanceado por
+tipo de stage. Los parametros de design forman parte del mismo genotipo y se cruzan
+y mutan de forma uniforme. Se permiten genotipos duplicados, pero cada propuesta se
+materializa como un `Individual` nuevo con ID y metadata de generacion propios.
+
+Los pesos se identifican por `Objective.name` y deben cubrir exactamente todos los
+objetivos. Un objetivo constante aporta cero porque no permite discriminar candidatos,
+corrigiendo la base artificial que el explorador heredado sumaba a objetivos constantes
+de minimizacion. Si todos los fitness retenidos son cero, los padres se seleccionan
+uniformemente entre evaluaciones exitosas. Si falla toda la generacion, la siguiente
+poblacion se reinicializa de forma aleatoria.
+
+`max_generations` es el numero de la ultima generacion. Para continuar desde una
+generacion previa se proporcionan `start_generation` e `initial_population`; por
+ejemplo, `start_generation=10, max_generations=20` evalua las generaciones 10 a 20.
+
+Metadata generada por individuo:
+
+```python
+{
+    "algorithm": {
+        "generation": 2,
+        "population_index": 4,
+        "proposal_origin": "crossover",
+        "parent_ids": ["parent-a", "parent-b"],
+        "mutation_applied": True,
+        "mutation_changed": False,
+    }
+}
+```
+
+`best_individuals()` devuelve el mejor individuo global al renormalizar todos los
+resultados exitosos. `generation_best_individuals()` conserva el mejor de cada
+generacion y `generation_fitnesses()` expone los fitness usados para seleccion.
+
+La adaptacion corrige defectos del codigo heredado: poblaciones impares, generacion
+extra sin consumir, IDs obsoletos tras mutacion, crash cuando todos fallan, orden de
+resultados dependiente de workers y ruleta degenerada cuando el fitness total es cero.
+
 ## 5. Objetivos De Optimizacion
 
 ### `OptimizationDirection`
@@ -693,6 +838,8 @@ Helpers implementados:
 
 ```python
 resolve_path(path: str | Path) -> Path
+resolve_resource_path(path: str | Path, *parts: str) -> Path
+resource_exists(path: str | Path) -> bool
 task_dir(task: EvaluationTask, *parts: str | Path) -> Path
 artifact_path(task: EvaluationTask, *parts: str | Path) -> Path
 log_path(task: EvaluationTask, *parts: str | Path) -> Path
@@ -891,14 +1038,117 @@ Los recursos requeridos por implementaciones concretas se proporcionan mediante
 ```python
 ParallelLocalBackend(
     max_workers=2,
-    metadata={"vitis_libraries_path": "/path/to/Vitis_Libraries"},
+    metadata={
+        "vitis_libraries_path": "/path/to/Vitis_Libraries",
+        "hls_include_paths": [
+            "/path/to/GENIO/hls_implementations/include",
+        ],
+    },
 )
 ```
 
-La task HLS interpreta esta ruta y deriva de ella `vision/L1/include`. Otras tasks
-pueden declarar y consumir sus propias rutas sin modificar la interfaz del backend.
+La task HLS deriva `vision/L1/include` desde `vitis_libraries_path` y añade después
+los directorios opcionales de `hls_include_paths`. Estos últimos permiten resolver
+headers propios como `genio/identity.hpp` sin copiarlos al package. Otras tasks pueden
+declarar y consumir sus propias rutas sin modificar la interfaz del backend.
+
+`v++` se obtiene de `PATH`; la sesión debe iniciarse después de cargar mediante
+`source` el entorno Vitis deseado. Las diferencias de API de Vitis Libraries se
+declaran como variantes `versions` dentro del JSON de implementación. El composer
+recibe `vitis_version` y genera directamente la llamada que corresponde al header
+original del checkout activo, sin reimplementar funciones de Vitis Vision.
+
+`tests/run_insect_random_search.py` detecta la versión desde `XILINX_VITIS`, admite
+el override `GENIO_VITIS_VERSION` y acepta `VITIS_LIBRARIES_PATH` para seleccionar
+el checkout de librerías que corresponde al entorno activo.
 
 `EvaluationExecutor.evaluate_many` envia una ola por step del workflow. Los fallos de una task se convierten en `Result.failed` solo para su individual; ese individual no avanza a steps posteriores y el resto del batch continua. Los errores de contrato del framework siguen propagandose como excepciones.
+
+### `SSHBackend`
+
+Ubicacion: `src/genio/backend/ssh.py`
+
+Backend remoto preliminar que usa SSH como pasarela de comandos y `rsync` para
+transferir workspaces.
+
+Constructor principal:
+
+```python
+SSHBackend(
+    host: str,
+    remote_base_work_dir: str | PurePosixPath,
+    username: str | None = None,
+    local_staging_dir: str | Path | None = None,
+    port: int | None = None,
+    identity_file: str | Path | None = None,
+    ssh_options: Sequence[str] = (),
+    run_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    transfer_timeout: float | None = 60.0,
+)
+```
+
+Flujo por comando:
+
+```text
+materializacion local
+    -> rsync al cwd remoto
+    -> ejecucion mediante ssh y setsid
+    -> recuperacion del cwd mediante rsync
+    -> parsing y artifacts locales
+```
+
+La orquestacion de `task.run(context)` permanece en el cliente. Las operaciones de
+filesystem preparan el staging local y `run_command()` desplaza al host remoto solo
+el directorio de trabajo del comando. Los recursos de metadata se interpretan en
+el host remoto y deben usar rutas POSIX absolutas.
+
+Los paths relativos usados por helpers de filesystem o por `run_command(cwd=...)`
+se resuelven dentro de `individual/step`. La sincronizacion usa semantica espejo en
+ambas direcciones, de modo que los borrados remotos tambien se reflejan en staging.
+
+La version preliminar es sincrona: `submit()` termina la ejecucion antes de devolver
+el handle y `cancel()` devuelve `False`. Un timeout abre una segunda conexion SSH y
+termina mediante `SIGTERM`/`SIGKILL` el grupo remoto registrado en `.genio.pgid`.
+El host remoto requiere `rsync` y una implementacion de `setsid` con `--wait`.
+
+### `ParallelSSHBackend`
+
+Ubicacion: `src/genio/backend/parallel_ssh.py`
+
+Version concurrente del gateway SSH. Comparte configuracion de transporte y creacion
+de contextos con `SSHBackend`, pero mantiene su propio lifecycle asincrono.
+
+```python
+ParallelSSHBackend(
+    host="fpga-worker",
+    max_workers=2,
+    max_pending=4,
+    remote_base_work_dir="/srv/genio/runs",
+    local_staging_dir="tmp/ssh-staging",
+    metadata={
+        "vitis_libraries_path": "/opt/xilinx/Vitis_Libraries",
+        "hls_include_paths": [
+            "/srv/GENIO/hls_implementations/include",
+        ],
+    },
+)
+```
+
+Responsabilidades:
+
+- Ejecutar hasta `max_workers` tasks SSH simultaneas mediante `ThreadPoolExecutor`.
+- Limitar opcionalmente los trabajos sin terminar mediante `max_pending`.
+- Exponer estados `PENDING`, `RUNNING`, `DONE`, `FAILED` y `CANCELLED`.
+- Cancelar tasks que aun permanecen en la cola local.
+- Evitar dos tasks activas sobre el mismo workspace remoto `individual/step`.
+- Mantener aislados tanto el staging local como el directorio remoto de cada task.
+- Repropagar desde `collect()` la excepcion original de transferencia o ejecucion.
+- Despertar con `BackendShutdownError` submissions bloqueados por `max_pending` al cerrar.
+
+La cancelacion de una task que ya esta ejecutandose devuelve `False`. La terminacion
+de comandos remotos en curso se realiza actualmente solo cuando expira el timeout
+configurado por la task.
 
 ### `EvaluationHandle`
 

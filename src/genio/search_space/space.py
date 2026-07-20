@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ast
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
@@ -129,6 +130,52 @@ class SearchSpace:
         for length in self.genotype_lengths:
             total *= length
         return total
+
+    def checkpoint_signature(self) -> dict[str, Any]:
+        """Return the complete ordered scenario structure for compatibility checks."""
+
+        return {
+            "scenario_id": self.scenario.id,
+            "metadata": self.scenario.metadata,
+            "slots": [
+                {
+                    "index": slot.index,
+                    "alternatives": [
+                        {
+                            "slot": choice.slot,
+                            "stage": choice.stage,
+                            "parameters": choice.parameters,
+                            "wrapper_inputs": choice.wrapper_inputs,
+                        }
+                        for choice in slot.alternatives
+                    ],
+                }
+                for slot in self.scenario.slots
+            ],
+            "design_spaces": [
+                {
+                    "domain": domain,
+                    "parameters": [
+                        {"name": name, "values": list(values)}
+                        for name, values in parameters.items()
+                    ],
+                }
+                for domain, parameters in self.scenario.design_spaces.items()
+            ],
+        }
+
+    def checkpoint_state(self) -> dict[str, int]:
+        """Return the next automatically allocated individual identifier."""
+
+        return {"next_id": self._next_id}
+
+    def restore_checkpoint_state(self, state: Mapping[str, Any]) -> None:
+        """Restore the individual identifier allocator from checkpoint state."""
+
+        next_id = state.get("next_id")
+        if isinstance(next_id, bool) or not isinstance(next_id, int) or next_id < 0:
+            raise ValueError("Checkpoint search-space next_id must be non-negative.")
+        self._next_id = next_id
 
     def from_genotype(
         self,

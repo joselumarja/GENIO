@@ -1,15 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from random import Random
+from typing import Any
 
 from genio.algorithm.base import SearchAlgorithm
+from genio.checkpoint.codec import (
+    decode_evaluation,
+    decode_random_state,
+    encode_evaluation,
+    encode_random_state,
+)
+from genio.checkpoint.errors import CheckpointFormatError
 from genio.core.evaluation import Evaluation
 from genio.core.individual import Individual
 
 
 class RandomSearch(SearchAlgorithm):
     """Randomly samples individuals from the search space."""
+
+    supports_checkpointing = True
 
     def __init__(
         self,
@@ -61,6 +71,60 @@ class RandomSearch(SearchAlgorithm):
     def should_stop(self) -> bool:
         """Return whether the evaluation budget is exhausted."""
         return self._asked >= self.max_evaluations
+
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return immutable random-search configuration."""
+
+        return {
+            "max_evaluations": self.max_evaluations,
+            "batch_size": self.batch_size,
+            "unique": self.unique,
+            "balanced": self.balanced,
+        }
+
+    def checkpoint_state(self) -> Mapping[str, Any]:
+        """Return budget, RNG and recorded random-search evaluations."""
+
+        return {
+            "asked": self._asked,
+            "random_state": encode_random_state(self.random.getstate()),
+            "evaluations": [encode_evaluation(item) for item in self._evaluations],
+        }
+
+    def restore_checkpoint_state(
+        self,
+        state: Mapping[str, Any],
+        *,
+        version: int,
+        search_space,
+    ) -> None:
+        """Restore random budget and deterministic RNG continuation."""
+
+        if version != self.checkpoint_version:
+            raise CheckpointFormatError(
+                f"Unsupported RandomSearch checkpoint version {version}."
+            )
+        try:
+            asked = state["asked"]
+            random_state = decode_random_state(state["random_state"])
+            evaluations = [
+                decode_evaluation(item, search_space)
+                for item in state.get("evaluations", [])
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CheckpointFormatError("Invalid RandomSearch checkpoint state.") from exc
+        if (
+            isinstance(asked, bool)
+            or not isinstance(asked, int)
+            or asked < 0
+            or asked > self.max_evaluations
+        ):
+            raise CheckpointFormatError("Invalid RandomSearch asked counter.")
+        if asked != len(evaluations):
+            raise CheckpointFormatError("RandomSearch checkpoint history is inconsistent.")
+        self.random.setstate(random_state)
+        self._asked = asked
+        self._evaluations = evaluations
 
 
 __all__ = ["RandomSearch"]

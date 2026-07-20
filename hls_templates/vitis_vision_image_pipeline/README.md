@@ -19,7 +19,7 @@ Required placeholders:
 - `@INCLUDES@`
 - `@INTERMEDIATE_DECLARATIONS@`
 - `@PIPELINE_BODY@`
-- `@output_0@`
+- `@output_0`
 - `@OUTPUT_TYPE@`
 - `@OUTPUT_ROWS@`
 - `@OUTPUT_COLS@`

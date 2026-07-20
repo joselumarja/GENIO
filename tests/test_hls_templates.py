@@ -1,8 +1,12 @@
+import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = ROOT / "hls_templates/vitis_vision_image_pipeline"
+RESIZE_IMPLEMENTATION_PATH = (
+    ROOT / "search_space/stages/implementations/hls/vitis_vision/resize.json"
+)
 
 
 def test_fifo_utils_template_contains_conversion_helpers() -> None:
@@ -59,7 +63,23 @@ def test_default_hls_config_template_exists() -> None:
 
     assert "part=" in source
     assert "[hls]" in source
-    assert "clock=5" in source
+    assert "clock=" not in source
     assert "flow_target=vivado" in source
     assert "syn.file=src/pipeline.cpp" in source
     assert "syn.top=top" in source
+    assert "package.output.format=ip_catalog" in source
+    assert "package.output.syn=false" in source
+    assert "vivado.flow=syn" in source
+
+
+def test_resize_descriptor_selects_direct_vitis_calls_by_version() -> None:
+    implementation = json.loads(RESIZE_IMPLEMENTATION_PATH.read_text(encoding="utf-8"))
+
+    assert implementation["include"] == ["imgproc/xf_resize.hpp"]
+    assert set(implementation["versions"]) == {"2023.1", "2025.2"}
+    call_2023 = implementation["versions"]["2023.1"]["function"][0]
+    call_2025 = implementation["versions"]["2025.2"]["function"][0]
+    assert call_2023.startswith("xf::cv::resize<")
+    assert call_2025.startswith("xf::cv::resize<")
+    assert "@USE_URAM" not in call_2023
+    assert "@USE_URAM" in call_2025

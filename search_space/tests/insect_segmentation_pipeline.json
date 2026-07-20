@@ -11,7 +11,7 @@
     "hls": {
       "clock": {
         "type": "choice",
-        "values": [5, 10]
+        "values": [10]
       },
       "flow_target": {
         "type": "constant",
@@ -19,7 +19,7 @@
       },
       "npc": {
         "type": "choice",
-        "values": ["XF_NPPC1", "XF_NPPC2"]
+        "values": ["XF_NPPC1"]
       },
       "pipeline_ii": {
         "type": "choice",

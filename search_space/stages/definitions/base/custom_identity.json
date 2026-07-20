@@ -1,0 +1,51 @@
+{
+  "id": "custom_identity",
+  "name": "Custom Identity",
+  "category": "custom",
+  "description": "Copy an image through the repository-hosted custom HLS implementation.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "image",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "image",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "opencv": "implementations/functional/opencv/custom_identity.json"
+    },
+    "hls": {
+      "vitis_vision": "implementations/hls/custom/custom_identity.json"
+    }
+  },
+  "composer_resolved": [
+    {
+      "name": "cols",
+      "token": "@COLS",
+      "description": "Maximum/current input image width."
+    },
+    {
+      "name": "npc",
+      "token": "@NPC",
+      "description": "Pixels per cycle."
+    },
+    {
+      "name": "rows",
+      "token": "@ROWS",
+      "description": "Maximum/current input image height."
+    },
+    {
+      "name": "type",
+      "token": "@TYPE",
+      "description": "Vitis Vision data type inferred from the pipeline."
+    }
+  ]
+}

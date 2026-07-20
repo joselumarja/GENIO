@@ -47,6 +47,21 @@ class ExecutionContext:
             resolved = self.base_work_dir / resolved
         return resolved
 
+    def resolve_resource_path(self, path: str | Path, *parts: str) -> Path:
+        """Resolve an execution-host resource path and append optional parts."""
+
+        return Path(path).expanduser().resolve().joinpath(*parts)
+
+    def resource_exists(self, path: str | Path) -> bool:
+        """Return whether a resource exists on the execution host."""
+
+        return Path(path).exists()
+
+    def resource_is_dir(self, path: str | Path) -> bool:
+        """Return whether a resource is a directory on the execution host."""
+
+        return Path(path).is_dir()
+
     def task_dir(self, task: EvaluationTask, *parts: str | Path) -> Path:
         """Return a path within a task's working directory."""
 

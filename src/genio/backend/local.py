@@ -47,6 +47,14 @@ class _LocalExecutionBackend(Backend):
             },
         )
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return local backend type and execution-context metadata."""
+
+        return {
+            "type": f"{type(self).__module__}.{type(self).__qualname__}",
+            "metadata": self.metadata,
+        }
+
     @staticmethod
     def _resolve_base_work_dir(base_work_dir: str | Path | None) -> Path:
         path = Path(base_work_dir) if base_work_dir is not None else Path(mkdtemp(prefix="genio-"))

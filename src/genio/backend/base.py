@@ -49,6 +49,11 @@ class EvaluationHandle:
 class Backend(ABC):
     """Execution mechanism for evaluation tasks."""
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return execution configuration relevant to resumed task semantics."""
+
+        return {"type": f"{type(self).__module__}.{type(self).__qualname__}"}
+
     @abstractmethod
     def submit(self, task: EvaluationTask) -> EvaluationHandle:
         """Submit an evaluation task and return its handle."""

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -590,9 +591,118 @@ def test_hls_image_pipeline_composer_substitutes_use_uram_token():
     package = composer.compose(individual)
     source = package.files["src/pipeline.cpp"]
 
-    assert "xf::cv::resize<XF_INTERPOLATION_AREA, XF_8UC3, 64, 128, 32, 64, XF_NPPC1, true, 2>" in source
+    assert (
+        "xf::cv::resize<XF_INTERPOLATION_AREA, XF_8UC3, 64, 128, 32, 64, "
+        "XF_NPPC1, true, 2>"
+    ) in source
+    assert '#include "imgproc/xf_resize.hpp"' in source
     assert "@USE_URAM" not in source
     assert "use_uram=" not in package.files["hls_config.cfg"]
+
+
+def test_hls_image_pipeline_composer_uses_repository_custom_header():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        rows=64,
+        cols=128,
+        image_type="XF_8UC1",
+    )
+    individual = Individual.from_slots(
+        id="custom_identity",
+        scenario="custom_pipeline",
+        slots=[StageChoice(slot=0, stage="custom_identity")],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert '#include "genio/identity.hpp"' in source
+    assert (
+        "genio::identity<XF_8UC1, 64, 128, XF_NPPC1>"
+        "(input_mat, stage_0_output);"
+    ) in source
+
+
+def test_hls_image_pipeline_composer_uses_2023_resize_signature():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        vitis_version="2023.1",
+        rows=64,
+        cols=128,
+    )
+    individual = Individual.from_slots(
+        id="resize_2023",
+        scenario="resize_pipeline",
+        design={"hls": {"use_uram": False}},
+        slots=[
+            StageChoice(
+                slot=0,
+                stage="resize",
+                parameters={"out_rows": 32, "out_cols": 64, "interpolation": "area"},
+            )
+        ],
+    )
+
+    package = composer.compose(individual)
+    source = package.files["src/pipeline.cpp"]
+
+    assert (
+        "xf::cv::resize<XF_INTERPOLATION_AREA, XF_8UC3, 64, 128, 32, 64, "
+        "XF_NPPC1, 2>"
+    ) in source
+    assert "XF_NPPC1, false, 2" not in source
+    assert package.metadata["vitis_version"] == "2023.1"
+
+
+def test_hls_image_pipeline_composer_rejects_unsupported_resize_version():
+    composer = HLSImagePipelineComposer(
+        DEFINITIONS_PATH,
+        templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
+        vitis_version="2024.1",
+        rows=64,
+        cols=128,
+    )
+    individual = Individual.from_slots(
+        id="resize_unsupported",
+        scenario="resize_pipeline",
+        slots=[
+            StageChoice(
+                slot=0,
+                stage="resize",
+                parameters={"out_rows": 32, "out_cols": 64, "interpolation": "area"},
+            )
+        ],
+    )
+
+    with pytest.raises(ComposerError, match="does not support Vitis '2024.1'"):
+        composer.compose(individual)
+
+
+def test_hls_token_replacement_is_exact_and_non_recursive():
+    rendered = HLSImagePipelineComposer._replace_tokens(
+        "@TYPE @ROWS @TYPE_EXTRA K_ROWS EXTRA_K_ROWS",
+        {
+            "@TYPE": "@ROWS",
+            "@ROWS": "64",
+            "K_ROWS": "3",
+        },
+    )
+
+    assert rendered == "@ROWS 64 @TYPE_EXTRA 3 EXTRA_K_ROWS"
+
+
+@pytest.mark.parametrize(
+    "include",
+    ("/absolute/header.hpp", "../header.hpp", "bad\\header.hpp", 'bad"header.hpp'),
+)
+def test_hls_image_pipeline_composer_rejects_non_portable_includes(include):
+    with pytest.raises(ComposerError, match="invalid portable include"):
+        HLSImagePipelineComposer._implementation_includes(
+            [include],
+            stage="custom_identity",
+        )
 
 
 def test_hls_image_pipeline_composer_renders_insect_segmentation_sample():
@@ -631,6 +741,17 @@ def test_hls_image_pipeline_composer_uses_npc_from_design_space():
     search_space = SearchSpace(
         ROOT / "search_space/tests/insect_segmentation_pipeline.json",
         DEFINITIONS_PATH,
+    )
+    hls_design = dict(search_space.scenario.design_spaces["hls"])
+    hls_design["npc"] = ("XF_NPPC1", "XF_NPPC2")
+    search_space = SearchSpace.from_scenario(
+        replace(
+            search_space.scenario,
+            design_spaces={
+                **search_space.scenario.design_spaces,
+                "hls": hls_design,
+            },
+        )
     )
     genotype = [0 for _ in search_space.genotype_lengths]
     npc_gene_index = len(search_space.slot_lengths) + tuple(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
@@ -96,3 +97,65 @@ class Composer(ABC):
             "scenario": individual.scenario,
             "search_index": individual.search_index,
         }
+
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return definition files that determine generated package semantics."""
+
+        definition_files = {
+            item.resolve()
+            for item in self.stages_definitions_path.rglob("*")
+            if item.is_file()
+        }
+        for definition in self.stage_definitions.values():
+            for relative_path in self._implementation_paths(
+                definition.get("implementations", {})
+            ):
+                implementation = (
+                    self.stages_definitions_path.parent / relative_path
+                ).resolve()
+                if implementation.is_file():
+                    definition_files.add(implementation)
+        return {
+            "type": f"{type(self).__module__}.{type(self).__qualname__}",
+            "stages_definitions_path": str(
+                self.stages_definitions_path.expanduser().resolve()
+            ),
+            "definition_files": self._file_fingerprints(
+                definition_files,
+                relative_to=self.stages_definitions_path.parent,
+            ),
+        }
+
+    @staticmethod
+    def _directory_fingerprint(path: Path) -> list[dict[str, str]]:
+        root = path.expanduser().resolve()
+        return Composer._file_fingerprints(
+            (item for item in root.rglob("*") if item.is_file()),
+            relative_to=root,
+        )
+
+    @staticmethod
+    def _file_fingerprints(
+        files: Iterator[Path] | set[Path],
+        *,
+        relative_to: Path,
+    ) -> list[dict[str, str]]:
+        root = relative_to.expanduser().resolve()
+        return [
+            {
+                "path": file.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
+            }
+            for file in sorted(Path(item).resolve() for item in files)
+        ]
+
+    @classmethod
+    def _implementation_paths(cls, value: Any) -> Iterator[str]:
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                yield from cls._implementation_paths(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from cls._implementation_paths(item)

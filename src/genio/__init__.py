@@ -1,4 +1,4 @@
-from genio.algorithm import GridSearch, RandomSearch, SearchAlgorithm
+from genio.algorithm import GeneticSearch, GridSearch, RandomSearch, SearchAlgorithm
 from genio.artifacts import (
     Artifact,
     ArtifactError,
@@ -15,9 +15,20 @@ from genio.backend import (
     EvaluationState,
     LocalBackend,
     ParallelLocalBackend,
+    ParallelSSHBackend,
+    SSHBackend,
     UnknownEvaluationHandleError,
 )
 from genio.cache import ArtifactCache, CacheEntry, LFUArtifactCache
+from genio.checkpoint import (
+    CheckpointCompatibilityError,
+    CheckpointError,
+    CheckpointFormatError,
+    CheckpointNotSupportedError,
+    CheckpointPolicy,
+    CheckpointStateError,
+    JSONCheckpointStore,
+)
 from genio.composer import (
     Composer,
     ComposerError,
@@ -77,6 +88,12 @@ __all__ = [
     "ComposerError",
     "CSVStatisticsCollector",
     "CacheEntry",
+    "CheckpointCompatibilityError",
+    "CheckpointError",
+    "CheckpointFormatError",
+    "CheckpointNotSupportedError",
+    "CheckpointPolicy",
+    "CheckpointStateError",
     "CommandResult",
     "Evaluation",
     "EvaluationExecutor",
@@ -88,6 +105,7 @@ __all__ = [
     "EvaluationWorkflowError",
     "ExecutionPackage",
     "ExecutionContext",
+    "GeneticSearch",
     "GridSearch",
     "HLSImagePipelineSynthesisConfigurationError",
     "HLSImagePipelineSynthesisError",
@@ -102,6 +120,7 @@ __all__ = [
     "ImageFunctionalMetricsArtifact",
     "InMemoryStatistics",
     "Individual",
+    "JSONCheckpointStore",
     "LocalBackend",
     "LFUArtifactCache",
     "MetricArtifact",
@@ -112,6 +131,7 @@ __all__ = [
     "OptimizationSession",
     "OptimizationDirection",
     "ParallelLocalBackend",
+    "ParallelSSHBackend",
     "Proposal",
     "PythonExecutionPackage",
     "PythonImagePipelineComposer",
@@ -124,6 +144,7 @@ __all__ = [
     "SearchScenarioSpec",
     "SearchSpace",
     "SearchResult",
+    "SSHBackend",
     "SlotSpec",
     "StatisticsCollector",
     "StageDefinitionNotFoundError",

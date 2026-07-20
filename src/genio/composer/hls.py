@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from genio.composer.base import Composer, ComposerError, ExecutionPackage
@@ -77,6 +77,7 @@ class HLSImagePipelineComposer(Composer):
         stages_definitions_path: str | Path,
         *,
         templates_path: str | Path = "hls_templates/vitis_vision_image_pipeline",
+        vitis_version: str = "2025.2",
         interface: str = "fifo",
         top_function: str = "top",
         rows: int = 2160,
@@ -90,6 +91,9 @@ class HLSImagePipelineComposer(Composer):
     ) -> None:
         super().__init__(stages_definitions_path)
         self.templates_path = Path(templates_path)
+        if not vitis_version.strip():
+            raise ValueError("vitis_version cannot be empty.")
+        self.vitis_version = vitis_version
         self.interface = interface
         self.top_function = top_function
         self.rows = rows
@@ -203,6 +207,7 @@ class HLSImagePipelineComposer(Composer):
             metadata={
                 **self.artifact_metadata(individual),
                 "backend": "vitis_vision",
+                "vitis_version": self.vitis_version,
                 "include_dirs": ("include",),
                 "interface": self.interface,
                 "package_type": "hls_image_pipeline",
@@ -219,18 +224,160 @@ class HLSImagePipelineComposer(Composer):
             },
         )
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return HLS generation settings, definitions and template fingerprints."""
+
+        return {
+            **Composer.checkpoint_signature(self),
+            "templates_path": str(self.templates_path.expanduser().resolve()),
+            "template_tree": self._directory_fingerprint(self.templates_path),
+            "vitis_version": self.vitis_version,
+            "interface": self.interface,
+            "top_function": self.top_function,
+            "rows": self.rows,
+            "cols": self.cols,
+            "image_type": self.image_type,
+            "npc": self.npc,
+            "axi_width": self.axi_width,
+            "axi_user_width": self.axi_user_width,
+            "axi_id_width": self.axi_id_width,
+            "axi_dest_width": self.axi_dest_width,
+        }
+
     def _stage_implementation(self, definition: Mapping[str, Any]) -> Mapping[str, Any]:
+        stage = str(definition.get("id", "<unknown>"))
         try:
             relative_path = definition["implementations"]["hls"]["vitis_vision"]
-        except KeyError as exc:
-            stage = definition.get("id", "<unknown>")
+        except (KeyError, TypeError) as exc:
             raise ComposerError(
                 f"Stage {stage!r} does not define an HLS 'vitis_vision' implementation."
             ) from exc
 
-        implementation_path = self.stages_definitions_path.parent / relative_path
-        with implementation_path.open("r", encoding="utf-8") as file:
-            return json.load(file)
+        if not isinstance(relative_path, str) or not relative_path.strip():
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation path must be a non-empty string."
+            )
+        implementation_root = self.stages_definitions_path.parent.resolve()
+        implementation_path = (implementation_root / relative_path).resolve()
+        try:
+            implementation_path.relative_to(implementation_root)
+        except ValueError as exc:
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation escapes {implementation_root}."
+            ) from exc
+        if not implementation_path.is_file():
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation file does not exist: "
+                f"{implementation_path}."
+            )
+        try:
+            with implementation_path.open("r", encoding="utf-8") as file:
+                implementation = json.load(file)
+        except json.JSONDecodeError as exc:
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation is not valid JSON: "
+                f"{implementation_path}."
+            ) from exc
+        if not isinstance(implementation, Mapping):
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation root must be an object."
+            )
+        if implementation.get("stage") != stage:
+            raise ComposerError(
+                f"HLS implementation {implementation_path} declares stage "
+                f"{implementation.get('stage')!r}, expected {stage!r}."
+            )
+
+        implementation = self._versioned_implementation(
+            implementation,
+            stage=stage,
+            implementation_path=implementation_path,
+        )
+
+        includes = self._implementation_includes(
+            implementation.get("include", ()),
+            stage=stage,
+        )
+        function = implementation.get("function")
+        if (
+            not isinstance(function, Sequence)
+            or isinstance(function, (str, bytes, bytearray))
+            or any(not isinstance(line, str) for line in function)
+        ):
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation 'function' must be a list "
+                "of strings."
+            )
+        return {
+            **implementation,
+            "include": includes,
+            "function": tuple(function),
+        }
+
+    def _versioned_implementation(
+        self,
+        implementation: Mapping[str, Any],
+        *,
+        stage: str,
+        implementation_path: Path,
+    ) -> dict[str, Any]:
+        versions = implementation.get("versions")
+        if versions is None:
+            return dict(implementation)
+        if not isinstance(versions, Mapping):
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation 'versions' must be an object."
+            )
+        variant = versions.get(self.vitis_version, versions.get("default"))
+        if variant is None:
+            raise ComposerError(
+                f"HLS implementation {implementation_path} does not support Vitis "
+                f"{self.vitis_version!r}."
+            )
+        if not isinstance(variant, Mapping):
+            raise ComposerError(
+                f"Stage {stage!r} HLS variant {self.vitis_version!r} must be an object."
+            )
+        return {
+            **{key: value for key, value in implementation.items() if key != "versions"},
+            **variant,
+        }
+
+    @staticmethod
+    def _implementation_includes(values: Any, *, stage: str) -> tuple[str, ...]:
+        if isinstance(values, str):
+            values = (values,)
+        elif (
+            not isinstance(values, Sequence)
+            or isinstance(values, (bytes, bytearray))
+        ):
+            raise ComposerError(
+                f"Stage {stage!r} HLS implementation 'include' must be a string "
+                "or a list of strings."
+            )
+
+        includes: list[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                raise ComposerError(
+                    f"Stage {stage!r} HLS includes must be non-empty strings."
+                )
+            include = value.strip()
+            include_path = PurePosixPath(include)
+            if (
+                include_path.is_absolute()
+                or ".." in include_path.parts
+                or "\\" in include
+                or '"' in include
+                or "\n" in include
+                or "\r" in include
+            ):
+                raise ComposerError(
+                    f"Stage {stage!r} has an invalid portable include: {include!r}."
+                )
+            if include not in includes:
+                includes.append(include)
+        return tuple(includes)
 
     def _token_values(
         self,
@@ -521,10 +668,24 @@ class HLSImagePipelineComposer(Composer):
 
     @staticmethod
     def _replace_tokens(source: str, token_values: Mapping[str, str]) -> str:
-        rendered = source
-        for token, value in sorted(token_values.items(), key=lambda item: len(item[0]), reverse=True):
-            rendered = rendered.replace(token, value)
-        return rendered
+        if not token_values:
+            return source
+
+        patterns: list[str] = []
+        for token in sorted(token_values, key=len, reverse=True):
+            escaped = re.escape(token)
+            if token.startswith("@") and not token.endswith("@"):
+                escaped += r"(?![A-Za-z0-9_])"
+            elif token[0].isalnum() or token[0] == "_":
+                escaped = r"(?<![A-Za-z0-9_])" + escaped
+                if token[-1].isalnum() or token[-1] == "_":
+                    escaped += r"(?![A-Za-z0-9_])"
+            patterns.append(escaped)
+        token_pattern = re.compile("|".join(patterns))
+        return token_pattern.sub(
+            lambda match: str(token_values[match.group(0)]),
+            source,
+        )
 
 
 __all__ = ["HLSExecutionPackage", "HLSImagePipelineComposer"]

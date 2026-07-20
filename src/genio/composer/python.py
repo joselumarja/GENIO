@@ -101,6 +101,14 @@ class PythonImagePipelineComposer(Composer):
             },
         )
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return Python implementation source and stage definition fingerprints."""
+
+        return {
+            **Composer.checkpoint_signature(self),
+            "implementation_source": self.implementation_source,
+        }
+
     def _stage_implementation(self, definition: Mapping[str, Any]) -> Mapping[str, Any]:
         try:
             relative_path = definition["implementations"]["functional"][

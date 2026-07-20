@@ -597,6 +597,18 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
     metadata: Mapping[str, Any] = field(default_factory=dict)
     task_type: type[EvaluationTask] = PythonImageFunctionalTask
 
+    def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return functional dataset, metric and composer configuration."""
+
+        return {
+            **EvaluationStep.checkpoint_signature(self),
+            "composer": self.composer,
+            "images_path": self.images_path,
+            "references_path": self.references_path,
+            "metrics": list(self.metrics),
+            "metadata": dict(self.metadata),
+        }
+
     def create_task(
         self,
         individual: Individual,

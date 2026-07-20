@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -23,6 +25,7 @@ class CSVStatisticsCollector(StatisticsCollector):
     """Persist one CSV row per proposed individual and run-level summaries."""
 
     SCHEMA_VERSION = 2
+    supports_checkpointing = True
     _BASE_COLUMNS = (
         "schema_version",
         "run_id",
@@ -80,6 +83,7 @@ class CSVStatisticsCollector(StatisticsCollector):
     def on_session_started(self, session: OptimizationSession) -> None:
         """Initialize output files and write the reproducibility manifest."""
 
+        self._reset_runtime_state()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._run_id = session.run_id
         self._session_id = session.id
@@ -87,6 +91,9 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._artifact_cache = session.artifact_cache
         self._started_at = datetime.now(timezone.utc)
         self._started_monotonic = time.perf_counter()
+        self._write_manifest(session)
+
+    def _write_manifest(self, session: OptimizationSession) -> None:
         self._write_json(
             self.run_manifest_path,
             {
@@ -118,6 +125,13 @@ class CSVStatisticsCollector(StatisticsCollector):
                 "session_metadata": dict(session.metadata),
             },
         )
+
+    def _reset_runtime_state(self) -> None:
+        self._rows = {}
+        self._proposal_order = []
+        self._seen_genotypes = set()
+        self._completed_batches = 0
+        self._completed_evaluations = 0
 
     def on_proposals_generated(self, proposals: Sequence[Proposal]) -> None:
         """Register generated proposals before their evaluations begin."""
@@ -234,6 +248,98 @@ class CSVStatisticsCollector(StatisticsCollector):
             ),
         }
 
+    def checkpoint_state(self) -> dict[str, Any]:
+        """Return rows, counters and timing needed to resume CSV reporting."""
+
+        elapsed_seconds = (
+            time.perf_counter() - self._started_monotonic
+            if self._started_monotonic is not None
+            else 0.0
+        )
+        return {
+            "rows": deepcopy(self._rows),
+            "proposal_order": list(self._proposal_order),
+            "seen_genotypes": sorted(self._seen_genotypes),
+            "run_id": self._run_id,
+            "session_id": self._session_id,
+            "algorithm_name": self._algorithm_name,
+            "started_at": self._isoformat(self._started_at),
+            "elapsed_seconds": elapsed_seconds,
+            "completed_batches": self._completed_batches,
+            "completed_evaluations": self._completed_evaluations,
+            "run_manifest": self._read_json_if_exists(self.run_manifest_path),
+            "run_summary": self._read_json_if_exists(self.run_summary_path),
+        }
+
+    def checkpoint_signature(self) -> dict[str, Any]:
+        """Return CSV output location and schema configuration."""
+
+        return {
+            **StatisticsCollector.checkpoint_signature(self),
+            "schema_version": self.SCHEMA_VERSION,
+            "output_dir": str(self.output_dir.expanduser().resolve()),
+            "individuals_filename": self.individuals_path.name,
+        }
+
+    def restore_checkpoint_state(
+        self,
+        state: dict[str, Any],
+        *,
+        session: OptimizationSession,
+        evaluations: Sequence[Evaluation],
+        completed: bool,
+    ) -> None:
+        """Restore authoritative CSV rows and discard uncommitted on-disk rows."""
+
+        try:
+            rows = {
+                str(proposal_id): dict(row)
+                for proposal_id, row in dict(state["rows"]).items()
+            }
+            proposal_order = [str(value) for value in state["proposal_order"]]
+            seen_genotypes = {str(value) for value in state["seen_genotypes"]}
+            started_at_value = state.get("started_at")
+            started_at = (
+                datetime.fromisoformat(str(started_at_value))
+                if started_at_value is not None
+                else datetime.now(timezone.utc)
+            )
+            elapsed_seconds = float(state.get("elapsed_seconds", 0.0))
+            completed_batches = int(state["completed_batches"])
+            completed_evaluations = int(state["completed_evaluations"])
+            run_manifest = state.get("run_manifest")
+            run_summary = state.get("run_summary")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Invalid CSV statistics checkpoint state.") from exc
+        if set(proposal_order) != set(rows) or len(proposal_order) != len(rows):
+            raise ValueError("CSV checkpoint proposal order is inconsistent.")
+        if completed_evaluations != len(evaluations):
+            raise ValueError("CSV checkpoint evaluation count is inconsistent.")
+
+        self._rows = rows
+        self._proposal_order = proposal_order
+        self._seen_genotypes = seen_genotypes
+        self._run_id = session.run_id
+        self._session_id = session.id
+        self._algorithm_name = self._qualified_name(session.algorithm)
+        self._started_at = started_at
+        self._started_monotonic = time.perf_counter() - max(0.0, elapsed_seconds)
+        self._completed_batches = completed_batches
+        self._completed_evaluations = completed_evaluations
+        self._artifact_cache = session.artifact_cache
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(run_manifest, Mapping):
+            self._write_json(self.run_manifest_path, run_manifest)
+        else:
+            self._write_manifest(session)
+        self._write_csv()
+        if completed:
+            if not isinstance(run_summary, Mapping):
+                raise ValueError("Completed CSV checkpoint has no run summary.")
+            self._write_json(self.run_summary_path, run_summary)
+        else:
+            self.run_summary_path.unlink(missing_ok=True)
+
     def _proposal_row(self, proposal: Proposal) -> dict[str, Any]:
         individual = proposal.individual
         algorithm_metadata = individual.metadata.get("algorithm", {})
@@ -326,7 +432,10 @@ class CSVStatisticsCollector(StatisticsCollector):
                         for key, value in row.items()
                     }
                 )
+            file.flush()
+            os.fsync(file.fileno())
         temporary_path.replace(self.individuals_path)
+        self._fsync_directory()
 
     def _metric_summary(self) -> dict[str, dict[str, float | int]]:
         values_by_metric: dict[str, list[float]] = {}
@@ -391,11 +500,34 @@ class CSVStatisticsCollector(StatisticsCollector):
     def _write_json(self, path: Path, value: Any) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-        temporary_path.write_text(
-            json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True, default=str),
-            encoding="utf-8",
-        )
+        with temporary_path.open("w", encoding="utf-8") as file:
+            file.write(
+                json.dumps(
+                    value,
+                    indent=2,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
+            file.flush()
+            os.fsync(file.fileno())
         temporary_path.replace(path)
+        self._fsync_directory()
+
+    @staticmethod
+    def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return dict(value) if isinstance(value, Mapping) else None
+
+    def _fsync_directory(self) -> None:
+        descriptor = os.open(self.output_dir, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 __all__ = ["CSVStatisticsCollector"]

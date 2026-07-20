@@ -19,7 +19,6 @@ void axiStream2fifo(
 #pragma HLS INLINE off
 
     for (int i = 0; i < words; i++) {
-#pragma HLS PIPELINE II=1
         ap_axiu<AXI_WIDTH, USER_WIDTH, ID_WIDTH, DEST_WIDTH> value = axi_stream.read();
         fifo.write(value.data);
     }
@@ -34,7 +33,6 @@ void fifo2axiStream(
 #pragma HLS INLINE off
 
     for (int i = 0; i < words; i++) {
-#pragma HLS PIPELINE II=1
         ap_axiu<AXI_WIDTH, USER_WIDTH, ID_WIDTH, DEST_WIDTH> value;
         value.data = fifo.read();
         value.keep = -1;
@@ -59,8 +57,6 @@ void axiStream2xfMat(
 
     hls::stream<ap_uint<AXI_WIDTH>> axi_fifo;
     hls::stream<ap_uint<XF_PIXELWIDTH(TYPE, NPC)>> mat_fifo;
-#pragma HLS STREAM variable=axi_fifo depth=2
-#pragma HLS STREAM variable=mat_fifo depth=2
 
     axiStream2fifo<AXI_WIDTH, USER_WIDTH, ID_WIDTH, DEST_WIDTH>(axi_stream, axi_fifo, axi_words);
     fifoWidthAdapter<AXI_WIDTH, XF_PIXELWIDTH(TYPE, NPC), mat_words>(axi_fifo, mat_fifo);
@@ -79,8 +75,6 @@ void xfMat2axiStream(
 
     hls::stream<ap_uint<XF_PIXELWIDTH(TYPE, NPC)>> mat_fifo;
     hls::stream<ap_uint<AXI_WIDTH>> axi_fifo;
-#pragma HLS STREAM variable=mat_fifo depth=2
-#pragma HLS STREAM variable=axi_fifo depth=2
 
     xfMat2fifo<TYPE, ROWS, COLS, NPC>(img, mat_fifo);
     fifoWidthAdapter<XF_PIXELWIDTH(TYPE, NPC), AXI_WIDTH, axi_words>(mat_fifo, axi_fifo);

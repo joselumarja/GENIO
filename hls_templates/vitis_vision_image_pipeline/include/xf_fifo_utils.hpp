@@ -18,7 +18,6 @@ void fifoWidthAdapter(hls::stream<ap_uint<IN_WIDTH>> &fifo_in, hls::stream<ap_ui
     static unsigned int count = 0, updated_counter = 0;
 
     for (int i = 0; i < N_ITERATIONS; i++) {
-#pragma HLS PIPELINE II=1
 
         if (OUT_WIDTH > IN_WIDTH) {
 
@@ -86,7 +85,6 @@ void fifo2xfMat(hls::stream<ap_uint<XF_PIXELWIDTH(TYPE, NPC)>>& fifo, xf::cv::Ma
     const int words = ROWS * COLS / XF_NPIXPERCYCLE(NPC);
 
     for (int i = 0; i < words; i++) {
-#pragma HLS PIPELINE II=1
         ap_uint<XF_PIXELWIDTH(TYPE, NPC)> value = fifo.read();
         img.write(i, value);
     }
@@ -106,7 +104,6 @@ void xfMat2fifo(xf::cv::Mat<TYPE, ROWS, COLS, NPC>& img, hls::stream<ap_uint<XF_
     const int words = ROWS * COLS / XF_NPIXPERCYCLE(NPC);
 
     for (int i = 0; i < words; i++) {
-#pragma HLS PIPELINE II=1
         ap_uint<XF_PIXELWIDTH(TYPE, NPC)> value = img.read(i);
         fifo.write(value);
     }
