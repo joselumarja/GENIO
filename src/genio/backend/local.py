@@ -79,7 +79,7 @@ class LocalBackend(_LocalExecutionBackend):
         self._artifacts: dict[str, list[Artifact]] = {}
         self._states: dict[str, EvaluationState] = {}
         self._errors: dict[str, str] = {}
-        self._exceptions: dict[str, Exception] = {}
+        self._exceptions: dict[str, BaseException] = {}
 
     def submit(self, task: EvaluationTask) -> EvaluationHandle:
         """Run an evaluation task synchronously and return its handle."""
@@ -99,10 +99,12 @@ class LocalBackend(_LocalExecutionBackend):
             artifacts = task.run(context)
             self._artifacts[handle.id] = list(artifacts)
             self._states[handle.id] = EvaluationState.DONE
-        except Exception as exc:
+        except BaseException as exc:
             self._errors[handle.id] = f"{type(exc).__name__}: {exc}"
             self._exceptions[handle.id] = exc
             self._states[handle.id] = EvaluationState.FAILED
+            if not isinstance(exc, Exception):
+                raise
         return handle
 
     def collect(self, handle: EvaluationHandle) -> list[Artifact]:

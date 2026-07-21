@@ -28,9 +28,10 @@ class _ParallelEvaluationRecord:
     state: EvaluationState = EvaluationState.PENDING
     future: Future[list[Artifact]] | None = None
     artifacts: list[Artifact] | None = None
-    exception: Exception | None = None
+    exception: BaseException | None = None
     error: str | None = None
     capacity_released: bool = False
+    cancel_requested: bool = False
 
 
 class ParallelLocalBackend(_LocalExecutionBackend):
@@ -137,61 +138,90 @@ class ParallelLocalBackend(_LocalExecutionBackend):
             return self._require_record(handle).error
 
     def cancel(self, handle: EvaluationHandle) -> bool:
-        """Cancel an evaluation only while it remains queued."""
+        """Cancel a queued evaluation or stop its active external commands."""
 
         with self._lock:
             record = self._require_record(handle)
-            if record.state is not EvaluationState.PENDING or record.future is None:
+            if record.state in {
+                EvaluationState.DONE,
+                EvaluationState.FAILED,
+                EvaluationState.CANCELLED,
+            } or record.cancel_requested:
                 return False
-            if not record.future.cancel():
-                return False
-            record.state = EvaluationState.CANCELLED
-            self._active_workspaces.discard(record.workspace_key)
-            self._release_capacity(record)
-            return True
+            if (
+                record.state is EvaluationState.PENDING
+                and record.future is not None
+                and record.future.cancel()
+            ):
+                record.cancel_requested = True
+                self._mark_cancelled(record)
+                return True
+            record.cancel_requested = True
+            context = record.context
+
+        context.cancel()
+        return True
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
-        """Stop accepting work and close the thread pool."""
+        """Stop accepting work and optionally cancel all unfinished tasks."""
 
         with self._lock:
-            if self._shutdown:
-                return
             self._shutdown = True
-            pending_handles = (
+            unfinished_handles = (
                 [
                     EvaluationHandle(id=handle_id, backend_id=self.__class__.__name__)
                     for handle_id, record in self._records.items()
-                    if record.state is EvaluationState.PENDING
+                    if record.state in {EvaluationState.PENDING, EvaluationState.RUNNING}
                 ]
                 if cancel_futures
                 else []
             )
 
-        for handle in pending_handles:
+        for handle in unfinished_handles:
             self.cancel(handle)
         self._executor.shutdown(wait=wait, cancel_futures=False)
 
     def _run_task(self, handle_id: str) -> list[Artifact]:
         with self._lock:
             record = self._records[handle_id]
-            record.state = EvaluationState.RUNNING
+            if record.cancel_requested:
+                self._mark_cancelled(record)
+                cancelled = True
+            else:
+                record.state = EvaluationState.RUNNING
+                cancelled = False
+
+        if cancelled:
+            raise CancelledError()
 
         try:
             artifacts = list(record.task.run(record.context))
-        except Exception as exc:
+        except BaseException as exc:
             with self._lock:
-                record.exception = exc
-                record.error = f"{type(exc).__name__}: {exc}"
-                record.state = EvaluationState.FAILED
-                self._active_workspaces.discard(record.workspace_key)
-                self._release_capacity(record)
+                cancelled = isinstance(exc, CancelledError)
+                if cancelled:
+                    self._mark_cancelled(record)
+                else:
+                    record.exception = exc
+                    record.error = f"{type(exc).__name__}: {exc}"
+                    record.state = EvaluationState.FAILED
+                    self._active_workspaces.discard(record.workspace_key)
+                    self._release_capacity(record)
+            if cancelled:
+                raise CancelledError() from exc
             raise
 
         with self._lock:
-            record.artifacts = artifacts
-            record.state = EvaluationState.DONE
-            self._active_workspaces.discard(record.workspace_key)
-            self._release_capacity(record)
+            cancelled = record.cancel_requested
+            if cancelled:
+                self._mark_cancelled(record)
+            else:
+                record.artifacts = artifacts
+                record.state = EvaluationState.DONE
+                self._active_workspaces.discard(record.workspace_key)
+                self._release_capacity(record)
+        if cancelled:
+            raise CancelledError()
         return artifacts
 
     def _require_record(self, handle: EvaluationHandle) -> _ParallelEvaluationRecord:
@@ -206,6 +236,11 @@ class ParallelLocalBackend(_LocalExecutionBackend):
         if self._capacity is not None and not record.capacity_released:
             record.capacity_released = True
             self._capacity.release()
+
+    def _mark_cancelled(self, record: _ParallelEvaluationRecord) -> None:
+        record.state = EvaluationState.CANCELLED
+        self._active_workspaces.discard(record.workspace_key)
+        self._release_capacity(record)
 
 
 __all__ = ["ParallelLocalBackend"]

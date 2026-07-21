@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from shutil import which
 from threading import Barrier, Event, Lock
+import sys
+import time
 
 import cv2 as cv
 import numpy as np
@@ -106,9 +108,29 @@ class BlockingTask(EvaluationTask):
         return []
 
 
+class ExternalCommandTask(EvaluationTask):
+    def run(self, context: ExecutionContext) -> list[Artifact]:
+        started_path = Path(self.metadata["started_path"])
+        survived_path = Path(self.metadata["survived_path"])
+        command = (
+            "import pathlib, signal, time; "
+            f"pathlib.Path({str(started_path)!r}).write_text('started', encoding='utf-8'); "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(1); "
+            f"pathlib.Path({str(survived_path)!r}).write_text('alive', encoding='utf-8')"
+        )
+        context.run_command((sys.executable, "-c", command))
+        return []
+
+
 class FailingTask(EvaluationTask):
     def run(self, context: ExecutionContext) -> list[Artifact]:
         raise ValueError("intentional task failure")
+
+
+class SystemExitTask(EvaluationTask):
+    def run(self, context: ExecutionContext) -> list[Artifact]:
+        raise SystemExit(7)
 
 
 class WorkspaceTask(EvaluationTask):
@@ -245,6 +267,30 @@ def test_parallel_local_backend_exposes_failure_and_original_exception(tmp_path)
         assert backend.error(handle) == "ValueError: intentional task failure"
 
 
+def test_parallel_local_backend_releases_workspace_after_base_exception(tmp_path) -> None:
+    backend = ParallelLocalBackend(max_workers=1, base_work_dir=tmp_path)
+    failed_handle = backend.submit(
+        SystemExitTask(
+            individual=make_individual("base-exception"),
+            step_id="shared",
+        )
+    )
+
+    with pytest.raises(SystemExit):
+        backend.collect(failed_handle)
+    assert backend.status(failed_handle) is EvaluationState.FAILED
+    assert backend.error(failed_handle) == "SystemExit: 7"
+
+    replacement = backend.submit(
+        WorkspaceTask(
+            individual=make_individual("base-exception"),
+            step_id="shared",
+        )
+    )
+    backend.collect(replacement)
+    backend.shutdown()
+
+
 def test_local_backend_returns_failed_handle_and_raises_on_collect(tmp_path) -> None:
     backend = LocalBackend(base_work_dir=tmp_path)
     handle = backend.submit(FailingTask(individual=make_individual("failed"), step_id="fail"))
@@ -255,7 +301,7 @@ def test_local_backend_returns_failed_handle_and_raises_on_collect(tmp_path) -> 
         backend.collect(handle)
 
 
-def test_parallel_local_backend_cancels_only_queued_tasks(tmp_path) -> None:
+def test_parallel_local_backend_cancels_queued_and_running_tasks(tmp_path) -> None:
     started = Event()
     release = Event()
     backend = ParallelLocalBackend(max_workers=1, base_work_dir=tmp_path)
@@ -278,7 +324,7 @@ def test_parallel_local_backend_cancels_only_queued_tasks(tmp_path) -> None:
     try:
         assert backend.status(running_handle) is EvaluationState.RUNNING
         assert backend.status(queued_handle) is EvaluationState.PENDING
-        assert backend.cancel(running_handle) is False
+        assert backend.cancel(running_handle) is True
         assert backend.cancel(queued_handle) is True
         assert backend.status(queued_handle) is EvaluationState.CANCELLED
         with pytest.raises(BackendError, match="cancelled"):
@@ -287,7 +333,54 @@ def test_parallel_local_backend_cancels_only_queued_tasks(tmp_path) -> None:
         release.set()
         backend.shutdown()
 
-    assert backend.status(running_handle) is EvaluationState.DONE
+    assert backend.status(running_handle) is EvaluationState.CANCELLED
+    with pytest.raises(BackendError, match="cancelled"):
+        backend.collect(running_handle)
+
+
+def test_parallel_local_backend_exception_cancels_processes_and_queue(tmp_path) -> None:
+    active_started = tmp_path / "active-started.txt"
+    active_survived = tmp_path / "active-survived.txt"
+    queued_started = tmp_path / "queued-started.txt"
+    backend = ParallelLocalBackend(max_workers=1, base_work_dir=tmp_path / "work")
+    handles = []
+
+    with pytest.raises(KeyboardInterrupt):
+        with backend:
+            handles.append(
+                backend.submit(
+                    ExternalCommandTask(
+                        individual=make_individual("active-command"),
+                        step_id="command",
+                        metadata={
+                            "started_path": active_started,
+                            "survived_path": active_survived,
+                        },
+                    )
+                )
+            )
+            handles.append(
+                backend.submit(
+                    ExternalCommandTask(
+                        individual=make_individual("queued-command"),
+                        step_id="command",
+                        metadata={
+                            "started_path": queued_started,
+                            "survived_path": tmp_path / "queued-survived.txt",
+                        },
+                    )
+                )
+            )
+            deadline = time.monotonic() + 2
+            while not active_started.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert active_started.exists()
+            raise KeyboardInterrupt
+
+    time.sleep(1.1)
+    assert not active_survived.exists()
+    assert not queued_started.exists()
+    assert all(backend.status(handle) is EvaluationState.CANCELLED for handle in handles)
 
 
 def test_parallel_local_backend_rejects_duplicate_active_workspace(tmp_path) -> None:

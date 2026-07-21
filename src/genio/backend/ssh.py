@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
+from threading import Event
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,18 @@ class _SSHExecutionContext(ExecutionContext):
     ssh_command: tuple[str, ...] = ("ssh",)
     rsync_command: tuple[str, ...] = ("rsync",)
     transfer_timeout: float | None = 60.0
+    _workspace_quarantined: Event = field(
+        default_factory=Event,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    @property
+    def workspace_quarantined(self) -> bool:
+        """Return whether remote process termination could not be confirmed."""
+
+        return self._workspace_quarantined.is_set()
 
     def resolve_path(self, path: str | Path) -> Path:
         """Resolve relative paths within this task's local staging workspace."""
@@ -92,16 +105,28 @@ class _SSHExecutionContext(ExecutionContext):
         local_cwd.mkdir(parents=True, exist_ok=True)
         remote_cwd = self._remote_path(local_cwd)
         self._sync_to_remote(local_cwd, remote_cwd)
+        local_marker_path = self._task_workspace()
+        remote_marker_path = self._remote_path(local_marker_path)
 
         remote_argv = (
             ("env", *(f"{key}={value}" for key, value in (env or {}).items()), *normalized_command)
             if env
             else normalized_command
         )
-        runner = f"echo $$ > .genio.pgid; exec {shlex.join(remote_argv)}"
+        command_token = uuid4().hex
+        pid_name = f".genio.{command_token}.pgid"
+        cancel_name = f".genio.{command_token}.cancelled"
+        quoted_pid_path = shlex.quote(str(remote_marker_path / pid_name))
+        quoted_cancel_path = shlex.quote(str(remote_marker_path / cancel_name))
+        runner = (
+            f"echo $$ > {quoted_pid_path}; "
+            f"if test -f {quoted_cancel_path}; then "
+            f"rm -f {quoted_pid_path} {quoted_cancel_path}; "
+            f"exit 125; "
+            f"fi; exec {shlex.join(remote_argv)}"
+        )
         remote_command = (
             f"cd {shlex.quote(str(remote_cwd))} && "
-            "rm -f .genio.pgid && "
             f"exec setsid --wait sh -c {shlex.quote(runner)}"
         )
 
@@ -112,17 +137,56 @@ class _SSHExecutionContext(ExecutionContext):
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            self._terminate_remote_process_group(remote_cwd)
-            self._best_effort_remove_pid(remote_cwd)
+            terminated = self._terminate_remote_process_group(
+                remote_marker_path,
+                pid_name,
+                cancel_name,
+            )
             self._best_effort_sync_from_remote(remote_cwd, local_cwd)
+            if terminated:
+                self._best_effort_remove_local_process_markers(
+                    local_marker_path,
+                    pid_name,
+                    cancel_name,
+                )
+            if not terminated:
+                self._workspace_quarantined.set()
+                raise BackendError(
+                    "Could not confirm termination of remote process group in "
+                    f"{str(remote_cwd)!r}."
+                ) from exc
             raise subprocess.TimeoutExpired(
                 normalized_command,
                 timeout,
                 output=exc.output,
                 stderr=exc.stderr,
             ) from exc
+        except BaseException as exc:
+            terminated = self._terminate_remote_process_group(
+                remote_marker_path,
+                pid_name,
+                cancel_name,
+            )
+            self._best_effort_sync_from_remote(remote_cwd, local_cwd)
+            if terminated:
+                self._best_effort_remove_local_process_markers(
+                    local_marker_path,
+                    pid_name,
+                    cancel_name,
+                )
+            if not terminated:
+                self._workspace_quarantined.set()
+                raise BackendError(
+                    "Could not confirm termination of remote process group in "
+                    f"{str(remote_cwd)!r}."
+                ) from exc
+            raise
 
-        self._best_effort_remove_pid(remote_cwd)
+        self._best_effort_remove_process_markers(
+            remote_marker_path,
+            pid_name,
+            cancel_name,
+        )
         self._sync_from_remote(remote_cwd, local_cwd)
         result = CommandResult(
             command=normalized_command,
@@ -183,6 +247,9 @@ class _SSHExecutionContext(ExecutionContext):
             f"mkdir -p {shlex.quote(str(remote_path))}",
             timeout=self.transfer_timeout,
         )
+        self._assert_remote_workspace_available(
+            self._remote_path(self._task_workspace())
+        )
         self._run_local_command(
             (
                 *self.rsync_command,
@@ -196,6 +263,24 @@ class _SSHExecutionContext(ExecutionContext):
             ),
             timeout=self.transfer_timeout,
         )
+
+    def _assert_remote_workspace_available(self, remote_path: PurePosixPath) -> None:
+        remote_prefix = shlex.quote(str(remote_path))
+        marker_patterns = " ".join(
+            f"{remote_prefix}/.genio*.{suffix}"
+            for suffix in ("pending", "pgid", "cancelled")
+        )
+        result = self._run_remote_shell(
+            f"for marker in {marker_patterns}; do "
+            'test ! -e "$marker" || exit 1; '
+            "done",
+            timeout=self.transfer_timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise BackendError(
+                f"Remote workspace {str(remote_path)!r} contains an unfinished command."
+            )
 
     def _sync_from_remote(self, remote_path: PurePosixPath, local_path: Path) -> None:
         local_path.mkdir(parents=True, exist_ok=True)
@@ -240,8 +325,71 @@ class _SSHExecutionContext(ExecutionContext):
             check=check,
         )
 
-    def _terminate_remote_process_group(self, remote_path: PurePosixPath) -> None:
-        pid_path = shlex.quote(str(remote_path / ".genio.pgid"))
+    def _run_cleanup_command(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float | None,
+        check: bool = True,
+    ) -> CommandResult:
+        cleanup_context = ExecutionContext(base_work_dir=self.base_work_dir)
+        return cleanup_context.run_command(
+            command,
+            timeout=min(timeout, 5.0) if timeout is not None else 5.0,
+            check=check,
+        )
+
+    def _run_cleanup_remote_shell(
+        self,
+        command: str,
+        *,
+        timeout: float | None,
+        check: bool = True,
+    ) -> CommandResult:
+        return self._run_cleanup_command(
+            (*self.ssh_command, self.ssh_target, command),
+            timeout=timeout,
+            check=check,
+        )
+
+    def _terminate_remote_process_group(
+        self,
+        remote_path: PurePosixPath,
+        pid_name: str,
+        cancel_name: str,
+    ) -> bool:
+        pid_path = shlex.quote(str(remote_path / pid_name))
+        cancel_path = shlex.quote(str(remote_path / cancel_name))
+        try:
+            cancellation = self._run_cleanup_remote_shell(
+                f": > {cancel_path}",
+                timeout=self.transfer_timeout,
+                check=False,
+            )
+        except Exception:
+            return False
+        if cancellation.returncode != 0:
+            return False
+
+        acknowledgement_command = (
+            "attempt=0; "
+            f"while test ! -f {pid_path} && test -f {cancel_path} "
+            "&& test \"$attempt\" -lt 20; do "
+            "sleep 0.1; attempt=$((attempt + 1)); done; "
+            f"if test ! -f {cancel_path}; then exit 0; fi; "
+            f"test -f {pid_path}"
+        )
+        try:
+            acknowledgement = self._run_cleanup_remote_shell(
+                acknowledgement_command,
+                timeout=self.transfer_timeout,
+                check=False,
+            )
+        except Exception:
+            return False
+        if acknowledgement.returncode != 0:
+            return False
+
         for signal_name in ("TERM", "KILL"):
             command = (
                 f"if test -f {pid_path}; then "
@@ -250,7 +398,7 @@ class _SSHExecutionContext(ExecutionContext):
                 "fi"
             )
             try:
-                self._run_remote_shell(
+                self._run_cleanup_remote_shell(
                     command,
                     timeout=self.transfer_timeout,
                     check=False,
@@ -260,15 +408,59 @@ class _SSHExecutionContext(ExecutionContext):
             if signal_name == "TERM":
                 time.sleep(0.5)
 
-    def _best_effort_remove_pid(self, remote_path: PurePosixPath) -> None:
+        verification_command = (
+            f"if test ! -f {pid_path}; then "
+            f"test ! -f {cancel_path}; exit $?; fi; "
+            f"pgid=$(cat {pid_path}) || exit 2; "
+            f'if kill -0 -"$pgid" 2>/dev/null; then exit 1; fi; '
+            f"rm -f {pid_path} {cancel_path}"
+        )
         try:
-            self._run_remote_shell(
-                f"rm -f {shlex.quote(str(remote_path / '.genio.pgid'))}",
+            verification = self._run_cleanup_remote_shell(
+                verification_command,
                 timeout=self.transfer_timeout,
                 check=False,
             )
         except Exception:
-            pass
+            return False
+        return verification.returncode == 0
+
+    def _best_effort_remove_process_markers(
+        self,
+        remote_path: PurePosixPath,
+        *names: str,
+    ) -> None:
+        self._remove_remote_process_markers(remote_path, *names)
+
+    def _remove_remote_process_markers(
+        self,
+        remote_path: PurePosixPath,
+        *names: str,
+    ) -> bool:
+        marker_paths = " ".join(
+            shlex.quote(str(remote_path / name))
+            for name in names
+        )
+        try:
+            result = self._run_cleanup_remote_shell(
+                f"rm -f {marker_paths}",
+                timeout=self.transfer_timeout,
+                check=False,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
+
+    @staticmethod
+    def _best_effort_remove_local_process_markers(
+        local_path: Path,
+        *names: str,
+    ) -> None:
+        for name in names:
+            try:
+                (local_path / name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _best_effort_sync_from_remote(
         self,
@@ -276,7 +468,20 @@ class _SSHExecutionContext(ExecutionContext):
         local_path: Path,
     ) -> None:
         try:
-            self._sync_from_remote(remote_path, local_path)
+            local_path.mkdir(parents=True, exist_ok=True)
+            self._run_cleanup_command(
+                (
+                    *self.rsync_command,
+                    "--archive",
+                    "--delete",
+                    "--protect-args",
+                    "--rsh",
+                    shlex.join(self.ssh_command),
+                    f"{self.ssh_target}:{remote_path}/",
+                    f"{local_path}/",
+                ),
+                timeout=self.transfer_timeout,
+            )
         except Exception:
             pass
 
@@ -291,7 +496,7 @@ class _SSHExecutionContext(ExecutionContext):
 class _SSHEvaluationRecord:
     state: EvaluationState
     artifacts: list[Artifact] = field(default_factory=list)
-    exception: Exception | None = None
+    exception: BaseException | None = None
     error: str | None = None
 
 
@@ -511,10 +716,12 @@ class SSHBackend(_SSHExecutionBackend):
         try:
             record.artifacts = list(task.run(context))
             record.state = EvaluationState.DONE
-        except Exception as exc:
+        except BaseException as exc:
             record.exception = exc
             record.error = f"{type(exc).__name__}: {exc}"
             record.state = EvaluationState.FAILED
+            if not isinstance(exc, Exception):
+                raise
         return handle
 
     def collect(self, handle: EvaluationHandle) -> list[Artifact]:

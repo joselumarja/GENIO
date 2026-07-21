@@ -7,9 +7,11 @@ import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from numbers import Real
 from pathlib import Path
+from threading import Event, Lock
 from typing import Any, TYPE_CHECKING
 
 from genio.artifacts import Artifact
@@ -38,6 +40,24 @@ class ExecutionContext:
     run_id: str | None = None
     backend_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    _cancel_requested: Event = field(
+        default_factory=Event,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _process_lock: Lock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _active_processes: dict[int, subprocess.Popen[str]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def resolve_path(self, path: str | Path) -> Path:
         """Resolve a path against the base working directory."""
@@ -186,6 +206,19 @@ class ExecutionContext:
         merged.update(env or {})
         return merged
 
+    def cancel(self) -> bool:
+        """Reject future commands and terminate command groups currently running."""
+
+        with self._process_lock:
+            if self._cancel_requested.is_set():
+                return False
+            self._cancel_requested.set()
+            processes = tuple(self._active_processes.values())
+
+        for process in processes:
+            self._terminate_process_group(process)
+        return True
+
     def run_command(
         self,
         command: Sequence[str],
@@ -199,26 +232,40 @@ class ExecutionContext:
 
         resolved_cwd = self.resolve_path(cwd) if cwd is not None else None
         normalized_command = tuple(command)
-        process = subprocess.Popen(
-            normalized_command,
-            cwd=resolved_cwd,
-            env=self.merged_env(env),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=os.name == "posix",
-        )
-        try:
-            stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            self._terminate_process_group(process)
-            stdout, stderr = process.communicate()
-            raise subprocess.TimeoutExpired(
+        with self._process_lock:
+            if self._cancel_requested.is_set():
+                raise CancelledError("Execution context was cancelled.")
+            process = subprocess.Popen(
                 normalized_command,
-                timeout,
-                output=stdout,
-                stderr=stderr,
-            ) from exc
+                cwd=resolved_cwd,
+                env=self.merged_env(env),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=os.name == "posix",
+            )
+            self._active_processes[process.pid] = process
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                self._terminate_process_group(process)
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(
+                    normalized_command,
+                    timeout,
+                    output=stdout,
+                    stderr=stderr,
+                ) from exc
+            except BaseException:
+                self._terminate_process_group(process)
+                raise
+        finally:
+            with self._process_lock:
+                self._active_processes.pop(process.pid, None)
+
+        if self._cancel_requested.is_set():
+            raise CancelledError("Execution context was cancelled.")
 
         result = CommandResult(
             command=normalized_command,

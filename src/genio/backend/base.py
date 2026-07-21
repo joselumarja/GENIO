@@ -88,7 +88,7 @@ class Backend(ABC):
         return None
 
     def cancel(self, handle: EvaluationHandle) -> bool:
-        """Cancel a pending evaluation and report whether cancellation succeeded."""
+        """Request cancellation of an unfinished evaluation."""
 
         raise NotImplementedError
 
@@ -103,7 +103,7 @@ class Backend(ABC):
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         """Shut down backend resources when leaving a context manager."""
 
-        self.shutdown()
+        self.shutdown(cancel_futures=exc_type is not None)
 
 
 __all__ = [

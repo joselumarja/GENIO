@@ -65,6 +65,11 @@ class FailingRemoteTask(EvaluationTask):
         return []
 
 
+class SystemExitRemoteTask(EvaluationTask):
+    def run(self, context: ExecutionContext) -> list[Artifact]:
+        raise SystemExit(9)
+
+
 class RemoteResourceTask(EvaluationTask):
     def run(self, context: ExecutionContext) -> list[Artifact]:
         resource = context.resolve_resource_path(
@@ -102,6 +107,20 @@ class TimeoutRemoteTask(EvaluationTask):
             ),
             cwd=package_dir,
             timeout=0.1,
+        )
+        return []
+
+
+class CancellableRemoteTask(EvaluationTask):
+    def run(self, context: ExecutionContext) -> list[Artifact]:
+        package_dir = context.ensure_dir(context.package_dir(self))
+        context.run_command(
+            (
+                "sh",
+                "-c",
+                "trap '' TERM; : > started.txt; sleep 1; printf 'alive' > survived.txt",
+            ),
+            cwd=package_dir,
         )
         return []
 
@@ -202,16 +221,41 @@ def install_fake_ssh_tools(tmp_path: Path) -> tuple[Path, Path]:
     ssh_path = tmp_path / "fake_ssh"
     ssh_path.write_text(
         f"""#!{sys.executable}
+import os
 import subprocess
 import sys
+import time
+from pathlib import Path
 
-completed = subprocess.run(
-    sys.argv[-1],
-    shell=True,
-    capture_output=True,
-    text=True,
-    start_new_session=True,
-)
+command = sys.argv[-1]
+marker = None
+if 'setsid --wait' in command:
+    marker = os.environ.get('GENIO_TEST_SSH_DISPATCH_MARKER')
+    delay = float(os.environ.get('GENIO_TEST_SSH_LAUNCH_DELAY', '0'))
+    if delay:
+        command = 'sleep %s; %s' % (delay, command)
+if os.environ.get('GENIO_TEST_SSH_FAIL_KILL') and 'kill -' in command:
+    raise SystemExit(255)
+if marker:
+    process = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    Path(marker).write_text('dispatched', encoding='utf-8')
+    stdout, stderr = process.communicate()
+    completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+else:
+    completed = subprocess.run(
+        command,
+        shell=True,
+        capture_output=True,
+        text=True,
+        start_new_session=True,
+    )
 sys.stdout.write(completed.stdout)
 sys.stderr.write(completed.stderr)
 raise SystemExit(completed.returncode)
@@ -428,6 +472,30 @@ def test_parallel_ssh_backend_exposes_original_remote_failure(tmp_path) -> None:
         assert backend.error(handle).startswith("RuntimeError: Remote command")
 
 
+def test_parallel_ssh_backend_releases_workspace_after_base_exception(tmp_path) -> None:
+    backend = make_parallel_backend(tmp_path, max_workers=1)
+    failed_handle = backend.submit(
+        SystemExitRemoteTask(
+            individual=make_individual("base-exception"),
+            step_id="remote",
+        )
+    )
+
+    with pytest.raises(SystemExit):
+        backend.collect(failed_handle)
+    assert backend.status(failed_handle) is EvaluationState.FAILED
+    assert backend.error(failed_handle) == "SystemExit: 9"
+
+    replacement = backend.submit(
+        RemoteFileTask(
+            individual=make_individual("base-exception"),
+            step_id="remote",
+        )
+    )
+    backend.collect(replacement)
+    backend.shutdown()
+
+
 def test_parallel_ssh_backend_scopes_relative_helpers_per_task(tmp_path) -> None:
     tasks = [
         RelativeWorkspaceTask(
@@ -447,7 +515,7 @@ def test_parallel_ssh_backend_scopes_relative_helpers_per_task(tmp_path) -> None
     assert not (tmp_path / "staging/work").exists()
 
 
-def test_parallel_ssh_backend_cancels_only_queued_tasks(tmp_path) -> None:
+def test_parallel_ssh_backend_cancels_queued_and_running_tasks(tmp_path) -> None:
     started = Event()
     release = Event()
     backend = make_parallel_backend(tmp_path, max_workers=1)
@@ -470,7 +538,7 @@ def test_parallel_ssh_backend_cancels_only_queued_tasks(tmp_path) -> None:
     try:
         assert backend.status(running_handle) is EvaluationState.RUNNING
         assert backend.status(queued_handle) is EvaluationState.PENDING
-        assert backend.cancel(running_handle) is False
+        assert backend.cancel(running_handle) is True
         assert backend.cancel(queued_handle) is True
         assert backend.status(queued_handle) is EvaluationState.CANCELLED
         with pytest.raises(BackendError, match="cancelled"):
@@ -479,7 +547,127 @@ def test_parallel_ssh_backend_cancels_only_queued_tasks(tmp_path) -> None:
         release.set()
         backend.shutdown()
 
-    assert backend.status(running_handle) is EvaluationState.DONE
+    assert backend.status(running_handle) is EvaluationState.CANCELLED
+    with pytest.raises(BackendError, match="cancelled"):
+        backend.collect(running_handle)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Remote process groups require POSIX.")
+def test_parallel_ssh_backend_cancels_active_remote_process_group(tmp_path) -> None:
+    backend = make_parallel_backend(tmp_path, max_workers=1)
+    handle = backend.submit(
+        CancellableRemoteTask(
+            individual=make_individual("cancel-remote"),
+            step_id="remote",
+        )
+    )
+    remote_package = tmp_path / "remote/run-001/cancel-remote/remote/package"
+    remote_task = remote_package.parent
+    deadline = time.monotonic() + 2
+    while not (remote_package / "started.txt").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert (remote_package / "started.txt").exists()
+
+    assert backend.cancel(handle) is True
+    with pytest.raises(BackendError, match="cancelled"):
+        backend.collect(handle)
+    backend.shutdown()
+
+    time.sleep(1.1)
+    assert backend.status(handle) is EvaluationState.CANCELLED
+    assert not (remote_package / "survived.txt").exists()
+    assert not tuple(remote_task.glob(".genio.*"))
+    assert not (
+        tmp_path / "staging/cancel-remote/remote/package/survived.txt"
+    ).exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Remote process groups require POSIX.")
+def test_parallel_ssh_cancellation_prevents_late_remote_launch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    dispatch_marker = tmp_path / "dispatch-started.txt"
+    monkeypatch.setenv("GENIO_TEST_SSH_DISPATCH_MARKER", str(dispatch_marker))
+    monkeypatch.setenv("GENIO_TEST_SSH_LAUNCH_DELAY", "0.5")
+    backend = make_parallel_backend(tmp_path, max_workers=1)
+    handle = backend.submit(
+        CancellableRemoteTask(
+            individual=make_individual("late-launch"),
+            step_id="remote",
+        )
+    )
+    deadline = time.monotonic() + 2
+    while not dispatch_marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert dispatch_marker.exists()
+
+    assert backend.cancel(handle) is True
+    with pytest.raises(BackendError, match="cancelled"):
+        backend.collect(handle)
+
+    replacement = backend.submit(
+        RemoteFileTask(
+            individual=make_individual("late-launch"),
+            step_id="remote",
+        )
+    )
+    backend.collect(replacement)
+    backend.shutdown()
+
+    remote_package = tmp_path / "remote/run-001/late-launch/remote/package"
+    remote_task = remote_package.parent
+    assert not (remote_package / "started.txt").exists()
+    assert not (remote_package / "survived.txt").exists()
+    assert not tuple(remote_task.glob(".genio.*"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Remote process groups require POSIX.")
+def test_parallel_ssh_reports_unconfirmed_remote_termination(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("GENIO_TEST_SSH_FAIL_KILL", "1")
+    backend = make_parallel_backend(tmp_path, max_workers=1)
+    handle = backend.submit(
+        CancellableRemoteTask(
+            individual=make_individual("failed-kill"),
+            step_id="remote",
+        )
+    )
+    remote_package = tmp_path / "remote/run-001/failed-kill/remote/package"
+    remote_task = remote_package.parent
+    deadline = time.monotonic() + 2
+    while not (remote_package / "started.txt").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert (remote_package / "started.txt").exists()
+
+    assert backend.cancel(handle) is True
+    with pytest.raises(BackendError, match="Could not confirm termination"):
+        backend.collect(handle)
+    assert backend.status(handle) is EvaluationState.FAILED
+    assert tuple(remote_task.glob(".genio.*"))
+
+    with pytest.raises(BackendError, match="same SSH workspace"):
+        backend.submit(
+            RemoteFileTask(
+                individual=make_individual("failed-kill"),
+                step_id="remote",
+            )
+        )
+    backend.shutdown()
+
+    time.sleep(1.1)
+    restarted = make_parallel_backend(tmp_path, max_workers=1)
+    stale_handle = restarted.submit(
+        RelativeWorkspaceTask(
+            individual=make_individual("failed-kill"),
+            step_id="remote",
+        )
+    )
+    with pytest.raises(BackendError, match="unfinished command"):
+        restarted.collect(stale_handle)
+    restarted.shutdown()
 
 
 def test_parallel_ssh_backend_rejects_duplicate_active_workspace(tmp_path) -> None:

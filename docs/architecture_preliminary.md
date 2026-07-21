@@ -1029,8 +1029,17 @@ Responsabilidades:
 - Limitar opcionalmente el numero de trabajos sin terminar mediante `max_pending`.
 - Mantener handles UUID, estados y errores protegidos frente a acceso concurrente.
 - Evitar dos tasks activas sobre el mismo workspace `individual/step`.
-- Cancelar tasks pendientes sin marcar falsamente como canceladas las que ya se ejecutan.
+- Cancelar tasks pendientes y terminar los grupos de procesos externos de tasks activas.
 - Conservar el orden de entrada al recoger batches.
+
+Una salida excepcional del context manager, incluido `KeyboardInterrupt`, solicita la
+cancelacion de todos los trabajos sin terminar antes de esperar al executor. Las tasks
+Python que no ejecutan comandos externos se cancelan cooperativamente al alcanzar el
+siguiente comando o al devolver el control al backend.
+
+Las aplicaciones deben convertir `SIGTERM` en una excepcion de Python y mantener el
+backend dentro de un context manager para activar este cierre ordenado. `SIGKILL` no
+permite ejecutar cleanup dentro del proceso y requiere supervision externa.
 
 Los recursos requeridos por implementaciones concretas se proporcionan mediante
 `metadata`, no mediante argumentos especializados del backend. Por ejemplo:
@@ -1109,7 +1118,8 @@ ambas direcciones, de modo que los borrados remotos tambien se reflejan en stagi
 
 La version preliminar es sincrona: `submit()` termina la ejecucion antes de devolver
 el handle y `cancel()` devuelve `False`. Un timeout abre una segunda conexion SSH y
-termina mediante `SIGTERM`/`SIGKILL` el grupo remoto registrado en `.genio.pgid`.
+termina mediante `SIGTERM`/`SIGKILL` el grupo remoto registrado en un marcador
+`.genio.<token>.pgid` unico para cada comando.
 El host remoto requiere `rsync` y una implementacion de `setsid` con `--wait`.
 
 ### `ParallelSSHBackend`
@@ -1140,15 +1150,21 @@ Responsabilidades:
 - Ejecutar hasta `max_workers` tasks SSH simultaneas mediante `ThreadPoolExecutor`.
 - Limitar opcionalmente los trabajos sin terminar mediante `max_pending`.
 - Exponer estados `PENDING`, `RUNNING`, `DONE`, `FAILED` y `CANCELLED`.
-- Cancelar tasks que aun permanecen en la cola local.
+- Cancelar tasks en cola y terminar los grupos de procesos remotos de tasks activas.
 - Evitar dos tasks activas sobre el mismo workspace remoto `individual/step`.
 - Mantener aislados tanto el staging local como el directorio remoto de cada task.
 - Repropagar desde `collect()` la excepcion original de transferencia o ejecucion.
 - Despertar con `BackendShutdownError` submissions bloqueados por `max_pending` al cerrar.
 
-La cancelacion de una task que ya esta ejecutandose devuelve `False`. La terminacion
-de comandos remotos en curso se realiza actualmente solo cuando expira el timeout
-configurado por la task.
+La cancelacion de una task activa termina primero su proceso SSH local y despues usa
+una conexion de limpieza independiente para enviar `SIGTERM`/`SIGKILL` al PGID remoto.
+El mismo mecanismo se activa al salir excepcionalmente del context manager o cuando
+expira el timeout configurado por la task.
+
+Cada comando usa un token de cancelacion unico que el launcher comprueba al publicar
+su PGID. La cancelacion solo libera el workspace cuando recibe ese acuse y el PGID deja
+de existir. Si no puede confirmarse la terminacion, el workspace queda en cuarentena
+y sus marcadores impiden que otra sesion los borre mediante `rsync --delete`.
 
 ### `EvaluationHandle`
 

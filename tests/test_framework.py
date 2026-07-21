@@ -1,7 +1,10 @@
+import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+from threading import Thread
 
 import pytest
 
@@ -602,6 +605,38 @@ def test_execution_context_timeout_terminates_child_processes(tmp_path):
         context.run_command([sys.executable, "-c", parent_code], timeout=0.2)
 
     assert "child-started" in (error.value.stdout or "")
+    time.sleep(0.6)
+    assert not marker_path.exists()
+
+
+def test_execution_context_keyboard_interrupt_terminates_child_processes(tmp_path):
+    context = ExecutionContext(base_work_dir=tmp_path)
+    started_path = tmp_path / "parent-started.txt"
+    marker_path = tmp_path / "child-survived.txt"
+    child_code = (
+        "import pathlib, time; "
+        "time.sleep(0.5); "
+        f"pathlib.Path({str(marker_path)!r}).write_text('alive', encoding='utf-8')"
+    )
+    parent_code = (
+        "import pathlib, subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        f"pathlib.Path({str(started_path)!r}).write_text('started', encoding='utf-8'); "
+        "time.sleep(5)"
+    )
+
+    def interrupt_when_started() -> None:
+        deadline = time.monotonic() + 2
+        while not started_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    interrupter = Thread(target=interrupt_when_started)
+    interrupter.start()
+    with pytest.raises(KeyboardInterrupt):
+        context.run_command([sys.executable, "-c", parent_code])
+    interrupter.join(timeout=2)
+
     time.sleep(0.6)
     assert not marker_path.exists()
 

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from random import Random
 import re
+import signal
 import sys
 
 
@@ -63,6 +64,10 @@ FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 5 * 60
 
 
+def stop_on_signal(signum, _frame) -> None:
+    raise SystemExit(128 + signum)
+
+
 def main() -> None:
     search_space = SearchSpace(ROOT / "search_space/tests/insect_segmentation_pipeline.json", ROOT / "search_space/stages/definitions")
     algorithm = RandomSearch(max_evaluations=MAX_EVALUATIONS, batch_size=BATCH_SIZE, unique=True, balanced=True, random=Random(SEED))
@@ -101,26 +106,30 @@ def main() -> None:
     )
     statistics = CSVStatisticsCollector(OUTPUT_DIR / "statistics")
 
-    with ParallelLocalBackend(
-        max_workers=MAX_WORKERS,
-        base_work_dir=OUTPUT_DIR / "work",
-        metadata={
-            "vitis_libraries_path": str(VITIS_LIBRARIES_PATH.resolve()),
-            "hls_include_paths": [
-                str(HLS_IMPLEMENTATIONS_INCLUDE_PATH.resolve()),
-            ],
-        },
-    ) as backend:
-        result = OptimizationSession(
-            id="insect_random_search",
-            run_id="insect_random_search",
-            search_space=search_space,
-            algorithm=algorithm,
-            backend=backend,
-            evaluation_workflow=workflow,
-            statistics=statistics,
-            artifact_cache=cache,
-        ).run()
+    previous_sigterm = signal.signal(signal.SIGTERM, stop_on_signal)
+    try:
+        with ParallelLocalBackend(
+            max_workers=MAX_WORKERS,
+            base_work_dir=OUTPUT_DIR / "work",
+            metadata={
+                "vitis_libraries_path": str(VITIS_LIBRARIES_PATH.resolve()),
+                "hls_include_paths": [
+                    str(HLS_IMPLEMENTATIONS_INCLUDE_PATH.resolve()),
+                ],
+            },
+        ) as backend:
+            result = OptimizationSession(
+                id="insect_random_search",
+                run_id="insect_random_search",
+                search_space=search_space,
+                algorithm=algorithm,
+                backend=backend,
+                evaluation_workflow=workflow,
+                statistics=statistics,
+                artifact_cache=cache,
+            ).run()
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
     print(f"Evaluations: {len(result.evaluations)}")
     print(f"CSV: {result.statistics['individuals_csv']}")
