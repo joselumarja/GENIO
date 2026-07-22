@@ -11,10 +11,13 @@ import pytest
 from genio import (
     Artifact,
     Evaluation,
+    EvaluationExecutionError,
+    EvaluationExecutor,
     EvaluationStep,
     EvaluationTask,
     ExecutionContext,
     EvaluationWorkflow,
+    EvaluationWorkflowError,
     Individual,
     InMemoryStatistics,
     LocalBackend,
@@ -102,9 +105,10 @@ class ScoreStep(EvaluationStep):
 class NamedStep(EvaluationStep):
     task_type = NamedTask
 
-    def __init__(self, id: str, depends_on=()) -> None:
+    def __init__(self, id: str, depends_on=(), required_artifacts=None) -> None:
         self.id = id
         self.depends_on = tuple(depends_on)
+        self.required_artifacts = dict(required_artifacts or {})
 
     def create_task(self, individual: Individual, artifacts):
         return NamedTask(individual, self.id, tuple(sorted(artifacts)))
@@ -427,6 +431,156 @@ def test_optimization_session_uses_evaluation_workflow_dependencies():
     ).run()
 
     assert result.evaluations[0].result.metrics == {}
+
+
+def test_evaluation_executor_passes_no_undeclared_dependency_artifacts():
+    received = {"sentinel": object()}
+
+    class DependencyOnlyStep(EvaluationStep):
+        id = "consume"
+        depends_on = ("compile",)
+        task_type = NamedTask
+
+        def create_task(self, individual, artifacts):
+            received.clear()
+            received.update(artifacts)
+            return NamedTask(individual, self.id)
+
+    workflow = EvaluationWorkflow((NamedStep("compile"), DependencyOnlyStep()))
+    individual = Individual.from_slots(
+        id="undeclared-artifacts",
+        scenario="workflow_contract",
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+
+    EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
+
+    assert received == {}
+    assert "required_artifacts" not in workflow.steps[-1].checkpoint_signature()
+
+
+def test_evaluation_workflow_rejects_dotted_step_ids():
+    with pytest.raises(EvaluationWorkflowError, match="without '\\.'"):
+        EvaluationWorkflow((NamedStep("compile.hls"),))
+
+
+def test_evaluation_workflow_rejects_artifact_from_undeclared_dependency():
+    with pytest.raises(EvaluationWorkflowError, match="not a declared dependency"):
+        EvaluationWorkflow(
+            (
+                NamedStep("compile"),
+                NamedStep(
+                    "consume",
+                    required_artifacts={"compile.output": MemoryArtifact},
+                ),
+            )
+        )
+
+
+def test_evaluation_workflow_rejects_malformed_artifact_requirement():
+    with pytest.raises(EvaluationWorkflowError, match="step_id.artifact_name"):
+        EvaluationWorkflow(
+            (
+                NamedStep("compile"),
+                NamedStep(
+                    "consume",
+                    depends_on=("compile",),
+                    required_artifacts={"output": MemoryArtifact},
+                ),
+            )
+        )
+
+
+def test_evaluation_workflow_rejects_non_artifact_requirement_type():
+    with pytest.raises(EvaluationWorkflowError, match="Artifact subclass"):
+        EvaluationWorkflow(
+            (
+                NamedStep("compile"),
+                NamedStep(
+                    "consume",
+                    depends_on=("compile",),
+                    required_artifacts={"compile.output": object},
+                ),
+            )
+        )
+
+
+def test_evaluation_executor_filters_and_types_required_artifacts():
+    received = {}
+
+    class InspectingStep(EvaluationStep):
+        id = "consume"
+        depends_on = ("compile", "unrelated")
+        required_artifacts = {"compile.output": MemoryArtifact}
+        task_type = NamedTask
+
+        def create_task(self, individual, artifacts):
+            received.update(artifacts)
+            return NamedTask(individual, self.id, tuple(sorted(artifacts)))
+
+    workflow = EvaluationWorkflow(
+        (
+            NamedStep("compile"),
+            NamedStep("unrelated"),
+            InspectingStep(),
+        )
+    )
+    individual = Individual.from_slots(
+        id="required-artifacts",
+        scenario="workflow_contract",
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+
+    result = EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
+
+    assert result.status is ResultStatus.SUCCESS
+    assert set(received) == {"compile.output"}
+    assert isinstance(received["compile.output"], MemoryArtifact)
+    assert workflow.steps[-1].checkpoint_signature()["required_artifacts"] == {
+        "compile.output": f"{MemoryArtifact.__module__}.{MemoryArtifact.__qualname__}"
+    }
+
+
+def test_evaluation_executor_rejects_missing_required_artifact():
+    workflow = EvaluationWorkflow(
+        (
+            NamedStep("compile"),
+            NamedStep(
+                "consume",
+                depends_on=("compile",),
+                required_artifacts={"compile.missing": MemoryArtifact},
+            ),
+        )
+    )
+    individual = Individual.from_slots(
+        id="missing-artifact",
+        scenario="workflow_contract",
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+
+    with pytest.raises(EvaluationExecutionError, match="was not produced"):
+        EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
+
+
+def test_evaluation_executor_rejects_wrong_required_artifact_type():
+    workflow = EvaluationWorkflow(
+        (
+            NamedStep("compile"),
+            NamedStep(
+                "consume",
+                depends_on=("compile",),
+                required_artifacts={"compile.output": MetricsMemoryArtifact},
+            ),
+        )
+    )
+    individual = Individual.from_slots(
+        id="wrong-artifact-type",
+        scenario="workflow_contract",
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+
+    with pytest.raises(EvaluationExecutionError, match="MetricsMemoryArtifact"):
+        EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
 
 
 def test_local_backend_uses_configured_base_work_dir(tmp_path):

@@ -1,4 +1,4 @@
-from genio.evaluation.executor import EvaluationExecutor
+from genio.evaluation.executor import EvaluationExecutionError, EvaluationExecutor
 from genio.evaluation.hls_image_pipeline_synthesis import (
     HLSImagePipelineSynthesisConfigurationError,
     HLSImagePipelineSynthesisError,
@@ -17,6 +17,7 @@ from genio.evaluation.workflow import EvaluationWorkflow, EvaluationWorkflowErro
 
 __all__ = [
     "EvaluationExecutor",
+    "EvaluationExecutionError",
     "EvaluationStep",
     "EvaluationTask",
     "HLSImagePipelineSynthesisConfigurationError",

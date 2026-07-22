@@ -17,6 +17,10 @@ from genio import SearchScenarioSpec
 from genio import SearchSpace
 from genio import SlotSpec
 from genio import StageChoice
+from genio.evaluation.hls_image_pipeline_synthesis import (
+    _HLSRunResult,
+    _MaterializedHLSPackage,
+)
 
 import pytest
 
@@ -44,7 +48,11 @@ class PackageComposer:
     def compose(self, individual):
         return HLSExecutionPackage(
             files={
-                "hls_config.cfg": "part=original-part\n\n[hls]\nclock=10\nflow_target=vivado\nsyn.file=old.cpp\nsyn.top=old_top\n",
+                "hls_config.cfg": (
+                    "part=original-part\n\n[hls]\nclock=10\nflow_target=vivado\n"
+                    "syn.file=old.cpp\nsyn.top=old_top\n"
+                    "package.output.format=rtl\npackage.output.syn=false\n"
+                ),
                 "src/pipeline.cpp": "void top() {}\n",
             },
             metadata={"source_files": ["src/pipeline.cpp"], "top_function": "top"},
@@ -149,6 +157,129 @@ def test_hls_image_pipeline_synthesis_task_requires_composer(tmp_path) -> None:
         match="requires a composer",
     ):
         task.run(ExecutionContext(base_work_dir=tmp_path))
+
+
+def test_hls_config_editing_preserves_repeated_options_and_comments(tmp_path) -> None:
+    individual = make_individual()
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        top_function="safa_accelerator",
+        part="new-part",
+        clock_period=5.0,
+        config_defaults={"hls.flow_target": "vitis"},
+        config_overrides={
+            "hls.flow_target": "vivado",
+            "hls.syn.blackbox.file": ("first.json", "second.json"),
+        },
+    )
+    context = ExecutionContext(base_work_dir=tmp_path)
+    package_dir = context.ensure_dir(context.package_dir(task))
+    config_path = context.write_text(
+        package_dir / "hls_config.cfg",
+        """# Preserve this comment
+part=old-part
+
+[hls]
+flow_target=old-flow
+syn.file=old_first.cpp
+# Preserve the boundary between source entries
+syn.file=old_second.cpp
+syn.top=old_top
+
+; Preserve repeated operator directives
+syn.op=mul impl=fabric
+syn.op=add impl=fabric
+package.output.format=rtl
+package.output.syn=false
+
+# Preserve the next section preamble
+[vivado]
+flow=syn
+""",
+    )
+    package = _MaterializedHLSPackage(
+        package_dir=package_dir,
+        package_metadata={
+            "top_function": "package_top",
+            "source_files": ("src/pipeline.cpp", "src/support.cpp"),
+        },
+    )
+
+    task._prepare_hls_config(context, package)
+
+    config = config_path.read_text(encoding="utf-8")
+    assert "# Preserve this comment" in config
+    assert "; Preserve repeated operator directives" in config
+    assert config.count("syn.op=") == 2
+    assert "syn.op=mul impl=fabric" in config
+    assert "syn.op=add impl=fabric" in config
+    assert config.count("syn.file=") == 2
+    assert "syn.file=src/pipeline.cpp" in config
+    assert "syn.file=src/support.cpp" in config
+    assert "syn.file=old_" not in config
+    assert (
+        config.index("syn.file=src/pipeline.cpp")
+        < config.index("# Preserve the boundary between source entries")
+        < config.index("syn.file=src/support.cpp")
+    )
+    assert "syn.top=safa_accelerator" in config
+    assert "part=new-part" in config
+    assert "clock=5.0" in config
+    assert "flow_target=vivado" in config
+    assert "syn.blackbox.file=first.json" in config
+    assert "syn.blackbox.file=second.json" in config
+    assert config.index("syn.blackbox.file=second.json") < config.index(
+        "# Preserve the next section preamble"
+    )
+
+    metadata = json.loads(
+        (package_dir / "hls_config_metadata.json").read_text(encoding="utf-8")
+    )
+    assert "config" not in metadata
+    assert metadata["applied_values"]["hls.syn.file"] == [
+        "src/pipeline.cpp",
+        "src/support.cpp",
+    ]
+    assert metadata["applied_values"]["hls.syn.top"] == "safa_accelerator"
+    assert len(metadata["content_sha256"]) == 64
+
+
+def test_hls_rtl_artifact_preserves_interface_and_vitis_version(tmp_path) -> None:
+    task = HLSImagePipelineSynthesisTask(
+        individual=make_individual(),
+        step_id="hls_image_pipeline_synthesis",
+    )
+    work_dir = tmp_path / "work"
+    verilog_dir = work_dir / "hls/syn/verilog"
+    verilog_dir.mkdir(parents=True)
+    (verilog_dir / "safa_accelerator.v").write_text(
+        "module safa_accelerator; endmodule\n",
+        encoding="utf-8",
+    )
+    context = ExecutionContext(base_work_dir=tmp_path)
+
+    artifact = task._collect_hls_rtl(
+        context,
+        _MaterializedHLSPackage(
+            package_dir=tmp_path / "package",
+            package_metadata={
+                "top_function": "safa_accelerator",
+                "interface": "safa_fifo",
+                "vitis_version": "2025.2",
+            },
+        ),
+        _HLSRunResult(work_dir=work_dir),
+    )
+
+    assert artifact.metadata["interface"] == "safa_fifo"
+    assert artifact.metadata["vitis_version"] == "2025.2"
+    descriptor = json.loads(Path(artifact.metadata["path"]).read_text(encoding="utf-8"))
+    assert descriptor["interface"] == "safa_fifo"
+    assert descriptor["vitis_version"] == "2025.2"
+    cached_artifact = artifact.for_individual("cached-individual")
+    assert cached_artifact.metadata["interface"] == "safa_fifo"
+    assert cached_artifact.metadata["vitis_version"] == "2025.2"
 
 
 def test_hls_image_pipeline_synthesis_task_validates_hls_config_path(tmp_path) -> None:
@@ -345,7 +476,9 @@ def test_hls_image_pipeline_synthesis_task_prepares_final_config(tmp_path) -> No
     assert "flow_target=vivado" in config
     assert "syn.file=src/pipeline.cpp" in config
     assert "syn.top=top" in config
+    assert "package.output.format=rtl" in config
     assert "package.output.syn=false" in config
+    assert "vivado.flow" not in config
     assert "npc=" not in config
     assert "pipeline_ii=" not in config
     assert "use_uram=" not in config
@@ -402,19 +535,24 @@ def test_hls_image_pipeline_synthesis_adds_execution_host_include_paths(
         individual=make_individual(),
         composer=PackageComposer(),
     )
-    config = {"hls": {"syn.cflags": "-DKEEP=1"}}
+    config = f'[hls]\nsyn.cflags=-DKEEP=1 -I"{custom_with_space.resolve()}"\n'
+    applied_values = {}
 
-    task._apply_package_backend_config(
+    config = task._apply_package_backend_config(
         context,
         package_dir,
         {"include_dirs": ["include"]},
         config,
+        applied_values,
     )
 
-    assert config["hls"]["syn.cflags"] == (
-        f'-DKEEP=1 -Iinclude -I"{custom_with_space.resolve()}" '
+    expected_cflags = (
+        f'-DKEEP=1 -I"{custom_with_space.resolve()}" -Iinclude '
         f"-I{custom_common.resolve()}"
     )
+    assert task._config_values(config, "hls.syn.cflags") == (expected_cflags,)
+    assert applied_values["hls.syn.cflags"] == expected_cflags
+    assert config.count(f'-I"{custom_with_space.resolve()}"') == 1
 
 
 def test_hls_image_pipeline_synthesis_accepts_single_custom_include_path(
@@ -468,6 +606,7 @@ def test_hls_image_pipeline_synthesis_rejects_unusable_custom_include_path(
             ),
             tmp_path,
             {},
+            "",
             {},
         )
 
@@ -573,6 +712,129 @@ def test_hls_image_pipeline_synthesis_supports_repository_custom_header(
 
     assert hls_report_artifact(artifacts).origin == "hls_synthesis"
     assert hls_rtl_artifact(artifacts).rtl_paths
+
+
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
+def test_hls_image_pipeline_synthesis_supports_multiple_morphology_kernels(
+    tmp_path,
+) -> None:
+    parameters = {
+        "kernel_shape": "rect",
+        "kernel_rows": 3,
+        "kernel_cols": 3,
+        "iterations": 1,
+    }
+    individual = Individual.from_slots(
+        id="multiple_morphology",
+        scenario="multiple_morphology",
+        slots=[
+            StageChoice(slot=0, stage="bgr_to_gray"),
+            StageChoice(slot=1, stage="morph_open", parameters=parameters),
+            StageChoice(slot=2, stage="morph_close", parameters=parameters),
+        ],
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        composer=HLSImagePipelineComposer(
+            DEFINITIONS_PATH,
+            templates_path=HLS_TEMPLATES_PATH,
+            interface="safa_fifo",
+            top_function="morphology_accelerator",
+            rows=48,
+            cols=48,
+        ),
+        part="xa7a100tcsg324-1I",
+    )
+
+    artifacts = task.run(
+        ExecutionContext(
+            base_work_dir=tmp_path,
+            metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH)},
+        )
+    )
+    rtl = hls_rtl_artifact(artifacts)
+
+    assert rtl.top_function == "morphology_accelerator"
+    assert any(path.name == "morphology_accelerator.v" for path in rtl.verilog_paths)
+
+
+@pytest.mark.hls_integration
+@REQUIRES_VITIS
+@REQUIRES_VITIS_LIBRARIES
+def test_hls_image_pipeline_synthesis_generates_safa_fifo_abi(tmp_path) -> None:
+    individual = Individual.from_slots(
+        id="safa_fifo",
+        scenario="safa_bgr_to_gray",
+        slots=[StageChoice(slot=0, stage="bgr_to_gray")],
+    )
+    task = HLSImagePipelineSynthesisTask(
+        individual=individual,
+        step_id="hls_image_pipeline_synthesis",
+        composer=HLSImagePipelineComposer(
+            DEFINITIONS_PATH,
+            templates_path=HLS_TEMPLATES_PATH,
+            interface="safa_fifo",
+            top_function="safa_accelerator",
+            rows=48,
+            cols=48,
+        ),
+        part="xa7a100tcsg324-1I",
+    )
+
+    artifacts = task.run(
+        ExecutionContext(
+            base_work_dir=tmp_path,
+            metadata={"vitis_libraries_path": str(VITIS_LIBRARIES_PATH)},
+        )
+    )
+    rtl = hls_rtl_artifact(artifacts)
+    top_path = next(
+        path for path in rtl.verilog_paths if path.name == "safa_accelerator.v"
+    )
+    top_source = top_path.read_text(encoding="utf-8")
+
+    assert rtl.top_function == "safa_accelerator"
+    assert rtl.metadata["interface"] == "safa_fifo"
+    assert rtl.metadata["vitis_version"] == "2025.2"
+    assert "module safa_accelerator (" in top_source
+    assert "BUS_IN_dout" in top_source
+    assert "BUS_IN_empty_n" in top_source
+    assert "BUS_IN_read" in top_source
+    assert "BUS_OUT_din" in top_source
+    assert "BUS_OUT_full_n" in top_source
+    assert "BUS_OUT_write" in top_source
+    assert "input  [31:0] BUS_IN_dout;" in top_source
+    assert "output  [31:0] BUS_OUT_din;" in top_source
+    assert "ap_start" in top_source
+    assert "ap_done" in top_source
+    assert "ap_ready" in top_source
+    assert "ap_idle" in top_source
+    assert "s_axi_control" not in top_source
+    package_dir = (
+        tmp_path
+        / individual.id
+        / "hls_image_pipeline_synthesis"
+        / "package"
+    )
+    effective_config = (package_dir / "hls_config.cfg").read_text(encoding="utf-8")
+    assert "package.output.format=rtl" in effective_config
+    assert "package.output.syn=false" in effective_config
+    assert "vivado.flow" not in effective_config
+    assert effective_config.count("syn.op=") == 24
+    steps_log = (package_dir / "work/logs/work.steps.log").read_text(encoding="utf-8")
+    assert "--hls.package.output.format rtl" in steps_log
+    assert "--hls.package.output.syn false" in steps_log
+    assert "--hls.vivado.flow" not in steps_log
+    assert steps_log.count("--hls.syn.op ") == 24
+    forbidden_suffixes = {".bit", ".dcp", ".xo", ".xclbin", ".zip"}
+    assert not tuple(
+        path
+        for path in (package_dir / "work").rglob("*")
+        if path.is_file() and path.suffix in forbidden_suffixes
+    )
 
 
 @pytest.mark.hls_integration

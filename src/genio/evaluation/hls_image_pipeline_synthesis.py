@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import subprocess
+import hashlib
 import shlex
+import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,9 @@ from genio.core.individual import Individual
 from genio.evaluation.hls_reports import parse_hls_synthesis_report
 from genio.evaluation.step import EvaluationStep
 from genio.evaluation.task import EvaluationTask, ExecutionContext
+
+
+HLSConfigValue = str | Sequence[str]
 
 
 class HLSImagePipelineSynthesisConfigurationError(ValueError):
@@ -82,8 +86,8 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
     top_function: str | None = None
     clock_period: float | None = None
     part: str | None = None
-    config_defaults: Mapping[str, str] = field(default_factory=dict)
-    config_overrides: Mapping[str, str] = field(default_factory=dict)
+    config_defaults: Mapping[str, HLSConfigValue] = field(default_factory=dict)
+    config_overrides: Mapping[str, HLSConfigValue] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def cache_inputs(self) -> Mapping[str, Any]:
@@ -138,6 +142,11 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             )
 
         origin = "hls_synthesis"
+        configuration_metadata = {
+            key: package.package_metadata[key]
+            for key in ("interface", "vitis_version")
+            if package.package_metadata.get(key) is not None
+        }
         metadata_path = context.write_json(
             context.artifact_path(self, f"hls_rtl_{origin}.json"),
             {
@@ -145,6 +154,7 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
                 "top_function": str(top_function),
                 "verilog_paths": tuple(str(path) for path in verilog_paths),
                 "vhdl_paths": tuple(str(path) for path in vhdl_paths),
+                **configuration_metadata,
             },
         )
         return HLSRTLArtifact(
@@ -155,7 +165,10 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             top_function=str(top_function),
             verilog_paths=verilog_paths,
             vhdl_paths=vhdl_paths,
-            metadata={"path": str(metadata_path)},
+            metadata={
+                "path": str(metadata_path),
+                **configuration_metadata,
+            },
         )
 
     @staticmethod
@@ -311,49 +324,83 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         # Precedence: base config < defaults < HLS design < package values
         # < explicit task fields < overrides; backend include flags are appended last.
         if self.hls_config is not None:
-            config = self._parse_hls_config(context.read_text(self.hls_config))
+            config = context.read_text(self.hls_config)
         elif package_config_path.exists():
-            config = self._parse_hls_config(context.read_text(package_config_path))
+            config = context.read_text(package_config_path)
         else:
-            config = {}
+            config = ""
 
-        self._apply_config_mapping(config, self.config_defaults)
+        applied_values: dict[str, Any] = {}
+        config = self._apply_config_mapping(
+            config,
+            self.config_defaults,
+            applied_values,
+        )
         hls_design = self.individual.design.get("hls", {})
         if isinstance(hls_design, Mapping):
             config_keys = self._hls_design_config_keys(hls_design)
-            self._apply_config_mapping(config, config_keys)
+            config = self._apply_config_mapping(
+                config,
+                config_keys,
+                applied_values,
+            )
 
         package_metadata = package.package_metadata
         top_function = self.top_function or package_metadata.get("top_function")
         if top_function is not None:
-            self._set_config_value(config, "hls.syn.top", str(top_function))
-        source_files = package_metadata.get("source_files")
+            config = self._replace_config_value(
+                config,
+                "hls.syn.top",
+                str(top_function),
+            )
+            applied_values["hls.syn.top"] = str(top_function)
+        source_files = self._metadata_tuple(package_metadata, "source_files")
         if source_files:
-            self._set_config_value(config, "hls.syn.file", str(tuple(source_files)[0]))
+            rendered_source_files = tuple(str(value) for value in source_files)
+            config = self._replace_config_values(
+                config,
+                "hls.syn.file",
+                rendered_source_files,
+            )
+            applied_values["hls.syn.file"] = rendered_source_files
 
         if self.part is not None:
-            self._set_config_value(config, "part", self.part)
+            config = self._replace_config_value(config, "part", self.part)
+            applied_values["part"] = self.part
         if self.clock_period is not None:
-            self._set_config_value(config, "hls.clock", str(self.clock_period))
+            config = self._replace_config_value(
+                config,
+                "hls.clock",
+                str(self.clock_period),
+            )
+            applied_values["hls.clock"] = str(self.clock_period)
 
-        self._apply_config_mapping(config, self.config_overrides)
-        self._apply_package_backend_config(context, package_dir, package_metadata, config)
+        config = self._apply_config_mapping(
+            config,
+            self.config_overrides,
+            applied_values,
+        )
+        config = self._apply_package_backend_config(
+            context,
+            package_dir,
+            package_metadata,
+            config,
+            applied_values,
+        )
 
-        if "hls" not in config or not isinstance(config["hls"], dict):
-            config["hls"] = {}
-        hls_section = config["hls"]
         for key in ("syn.file", "syn.top"):
-            if key not in hls_section:
+            if not self._config_values(config, f"hls.{key}"):
                 raise HLSImagePipelineSynthesisConfigurationError(
                     f"Final hls_config.cfg is missing required [hls] key: {key}."
                 )
 
-        context.write_text(package_config_path, self._render_hls_config(config))
+        context.write_text(package_config_path, config)
         context.write_json(
             package_dir / "hls_config_metadata.json",
             {
                 "path": str(package_config_path),
-                "config": config,
+                "applied_values": applied_values,
+                "content_sha256": hashlib.sha256(config.encode("utf-8")).hexdigest(),
             },
         )
         return package_config_path
@@ -363,8 +410,9 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         context: ExecutionContext,
         package_dir: Path,
         package_metadata: Mapping[str, Any],
-        config: dict[str, Any],
-    ) -> None:
+        config: str,
+        applied_values: dict[str, Any],
+    ) -> str:
         include_flags = [
             self._include_cflag(include_dir)
             for include_dir in self._package_include_dirs(package_dir, package_metadata)
@@ -411,7 +459,7 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             if include_flag not in include_flags:
                 include_flags.append(include_flag)
 
-        self._append_hls_cflags(config, include_flags)
+        return self._append_hls_cflags(config, include_flags, applied_values)
 
     @staticmethod
     def _execution_include_paths(metadata: Mapping[str, Any]) -> tuple[str, ...]:
@@ -451,18 +499,36 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         return tuple(str(value) for value in values)
 
     @classmethod
-    def _append_hls_cflags(cls, config: dict[str, Any], flags: list[str]) -> None:
+    def _append_hls_cflags(
+        cls,
+        config: str,
+        flags: list[str],
+        applied_values: dict[str, Any],
+    ) -> str:
         if not flags:
-            return
-        if "hls" not in config or not isinstance(config["hls"], dict):
-            config["hls"] = {}
-        hls_section = config["hls"]
-        existing = str(hls_section.get("syn.cflags", "")).strip()
-        cflags = shlex.split(existing, posix=False) if existing else []
+            return config
+        existing_values = cls._config_values(config, "hls.syn.cflags")
+        existing = existing_values[-1].strip() if existing_values else ""
+        normalized_cflags = shlex.split(existing, posix=True) if existing else []
+        new_flags: list[str] = []
         for flag in flags:
-            if flag not in cflags:
-                cflags.append(flag)
-        hls_section["syn.cflags"] = " ".join(cflags)
+            normalized_flag = shlex.split(flag, posix=True)
+            if len(normalized_flag) != 1:
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    f"Invalid HLS include flag: {flag!r}."
+                )
+            if normalized_flag[0] not in normalized_cflags:
+                normalized_cflags.append(normalized_flag[0])
+                new_flags.append(flag)
+        rendered_cflags = " ".join(
+            value for value in (existing, *new_flags) if value
+        )
+        applied_values["hls.syn.cflags"] = rendered_cflags
+        return cls._replace_config_value(
+            config,
+            "hls.syn.cflags",
+            rendered_cflags,
+        )
 
     @staticmethod
     def _include_cflag(path: str | Path) -> str:
@@ -493,70 +559,183 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             package_metadata=dict(package.metadata),
         )
 
-    @staticmethod
-    def _parse_hls_config(content: str) -> dict[str, Any]:
-        config: dict[str, Any] = {}
-        current_section: str | None = None
-        for raw_line in content.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or line.startswith(";"):
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                current_section = line[1:-1].strip()
-                config.setdefault(current_section, {})
-                continue
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if current_section is None:
-                config[key] = value
-            else:
-                section = config.setdefault(current_section, {})
-                assert isinstance(section, dict)
-                section[key] = value
-        return config
-
     @classmethod
     def _apply_config_mapping(
         cls,
-        config: dict[str, Any],
+        config: str,
         values: Mapping[str, Any],
-    ) -> None:
+        applied_values: dict[str, Any],
+    ) -> str:
         for key, value in values.items():
-            cls._set_config_value(config, key, str(value))
-
-    @staticmethod
-    def _set_config_value(config: dict[str, Any], key: str, value: str) -> None:
-        if "." not in key:
-            config[key] = value
-            return
-        section_name, option = key.split(".", 1)
-        section = config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            raise HLSImagePipelineSynthesisConfigurationError(
-                f"Cannot set {key!r}: {section_name!r} is not a config section."
-            )
-        section[option] = value
-
-    @staticmethod
-    def _render_hls_config(config: Mapping[str, Any]) -> str:
-        lines: list[str] = []
-        sections: list[tuple[str, Mapping[str, Any]]] = []
-        for key, value in config.items():
-            if isinstance(value, Mapping):
-                sections.append((key, value))
+            if isinstance(value, Sequence) and not isinstance(
+                value,
+                (str, bytes, bytearray),
+            ):
+                rendered_values = tuple(str(item) for item in value)
+                config = cls._replace_config_values(config, key, rendered_values)
+                applied_values[key] = rendered_values
             else:
-                lines.append(f"{key}={value}")
-        if lines and sections:
-            lines.append("")
-        for section_name, section in sections:
-            lines.append(f"[{section_name}]")
-            for key, value in section.items():
-                lines.append(f"{key}={value}")
-            lines.append("")
+                rendered_value = str(value)
+                config = cls._replace_config_value(config, key, rendered_value)
+                applied_values[key] = rendered_value
+        return config
+
+    @classmethod
+    def _replace_config_value(cls, content: str, key: str, value: str) -> str:
+        return cls._replace_config_values(content, key, (value,))
+
+    @classmethod
+    def _replace_config_values(
+        cls,
+        content: str,
+        key: str,
+        values: Sequence[str],
+    ) -> str:
+        section_name, option = cls._split_config_key(key)
+        lines = content.splitlines()
+        matching_indexes = cls._config_key_indexes(lines, section_name, option)
+        rendered_lines = [f"{option}={value}" for value in values]
+
+        if matching_indexes:
+            matching_set = set(matching_indexes)
+            last_index = matching_indexes[-1]
+            rendered_index = 0
+            replaced: list[str] = []
+            for index, line in enumerate(lines):
+                if index in matching_set:
+                    if rendered_index < len(rendered_lines):
+                        replaced.append(rendered_lines[rendered_index])
+                        rendered_index += 1
+                    if index == last_index:
+                        replaced.extend(rendered_lines[rendered_index:])
+                else:
+                    replaced.append(line)
+            lines = replaced
+        elif rendered_lines:
+            lines = cls._insert_config_lines(lines, section_name, rendered_lines)
+
         return "\n".join(lines).rstrip() + "\n"
+
+    @classmethod
+    def _config_values(cls, content: str, key: str) -> tuple[str, ...]:
+        section_name, option = cls._split_config_key(key)
+        lines = content.splitlines()
+        return tuple(
+            cls._config_line_value(lines[index])
+            for index in cls._config_key_indexes(lines, section_name, option)
+        )
+
+    @staticmethod
+    def _split_config_key(key: str) -> tuple[str | None, str]:
+        if "." not in key:
+            if not key:
+                raise HLSImagePipelineSynthesisConfigurationError(
+                    "HLS config key cannot be empty."
+                )
+            return None, key
+        section_name, option = key.split(".", 1)
+        if not section_name or not option:
+            raise HLSImagePipelineSynthesisConfigurationError(
+                f"Invalid qualified HLS config key: {key!r}."
+            )
+        return section_name, option
+
+    @classmethod
+    def _config_key_indexes(
+        cls,
+        lines: Sequence[str],
+        section_name: str | None,
+        option: str,
+    ) -> list[int]:
+        indexes: list[int] = []
+        current_section: str | None = None
+        for index, line in enumerate(lines):
+            parsed_section = cls._config_section(line)
+            if parsed_section is not None:
+                current_section = parsed_section
+                continue
+            if current_section == section_name and cls._config_line_key(line) == option:
+                indexes.append(index)
+        return indexes
+
+    @classmethod
+    def _insert_config_lines(
+        cls,
+        lines: list[str],
+        section_name: str | None,
+        rendered_lines: list[str],
+    ) -> list[str]:
+        if section_name is None:
+            section_end = next(
+                (index for index, line in enumerate(lines) if cls._config_section(line)),
+                len(lines),
+            )
+            option_indexes = [
+                index
+                for index in range(section_end)
+                if cls._config_line_key(lines[index]) is not None
+            ]
+            insertion_index = option_indexes[-1] + 1 if option_indexes else 0
+            return (
+                lines[:insertion_index]
+                + rendered_lines
+                + lines[insertion_index:]
+            )
+
+        section_start = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if cls._config_section(line) == section_name
+            ),
+            None,
+        )
+        if section_start is None:
+            appended = list(lines)
+            if appended and appended[-1].strip():
+                appended.append("")
+            appended.extend((f"[{section_name}]", *rendered_lines))
+            return appended
+
+        insertion_index = next(
+            (
+                index
+                for index in range(section_start + 1, len(lines))
+                if cls._config_section(lines[index]) is not None
+            ),
+            len(lines),
+        )
+        option_indexes = [
+            index
+            for index in range(section_start + 1, insertion_index)
+            if cls._config_line_key(lines[index]) is not None
+        ]
+        insertion_index = (
+            option_indexes[-1] + 1 if option_indexes else section_start + 1
+        )
+        return lines[:insertion_index] + rendered_lines + lines[insertion_index:]
+
+    @staticmethod
+    def _config_section(line: str) -> str | None:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return stripped[1:-1].strip()
+        return None
+
+    @staticmethod
+    def _config_line_key(line: str) -> str | None:
+        stripped = line.strip()
+        if (
+            not stripped
+            or stripped.startswith(("#", ";", "["))
+            or "=" not in stripped
+        ):
+            return None
+        return stripped.split("=", 1)[0].strip()
+
+    @staticmethod
+    def _config_line_value(line: str) -> str:
+        return line.split("=", 1)[1].strip()
 
     def _validate_configuration(self, context: ExecutionContext) -> None:
         if self.composer is None:
@@ -649,8 +828,8 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
     top_function: str | None = None
     clock_period: float | None = None
     part: str | None = None
-    config_defaults: Mapping[str, str] = field(default_factory=dict)
-    config_overrides: Mapping[str, str] = field(default_factory=dict)
+    config_defaults: Mapping[str, HLSConfigValue] = field(default_factory=dict)
+    config_overrides: Mapping[str, HLSConfigValue] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     task_type: type[EvaluationTask] = HLSImagePipelineSynthesisTask
 

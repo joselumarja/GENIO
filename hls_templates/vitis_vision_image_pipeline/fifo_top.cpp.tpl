@@ -19,7 +19,7 @@ void @TOP_FUNCTION@(
 ) {
 #pragma HLS INTERFACE ap_fifo port=input_fifo
 #pragma HLS INTERFACE ap_fifo port=output_fifo
-#pragma HLS INTERFACE s_axilite port=return bundle=control
+#pragma HLS INTERFACE ap_ctrl_hs port=return
 @TOP_PRAGMAS@
 #pragma HLS DATAFLOW
 

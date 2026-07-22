@@ -50,6 +50,7 @@ from genio.core import (
 )
 from genio.evaluation import (
     CommandResult,
+    EvaluationExecutionError,
     EvaluationExecutor,
     EvaluationStep,
     EvaluationTask,
@@ -96,6 +97,7 @@ __all__ = [
     "CheckpointStateError",
     "CommandResult",
     "Evaluation",
+    "EvaluationExecutionError",
     "EvaluationExecutor",
     "EvaluationHandle",
     "EvaluationState",

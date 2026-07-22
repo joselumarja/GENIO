@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = ROOT / "hls_templates/vitis_vision_image_pipeline"
@@ -46,6 +48,22 @@ def test_fifo_top_template_declares_xf_mat_pipeline_placeholders() -> None:
     assert "output_mat" not in source
 
 
+def test_safa_fifo_top_template_declares_stable_32_bit_abi() -> None:
+    source = (TEMPLATE_DIR / "safa_fifo_top.cpp.tpl").read_text(encoding="utf-8")
+
+    assert "hls::stream<ap_uint<SAFA_FIFO_WIDTH>>& BUS_IN" in source
+    assert "hls::stream<ap_uint<SAFA_FIFO_WIDTH>>& BUS_OUT" in source
+    assert "#define SAFA_FIFO_WIDTH 32" in source
+    assert "#pragma HLS INTERFACE ap_fifo port=BUS_IN" in source
+    assert "#pragma HLS INTERFACE ap_fifo port=BUS_OUT" in source
+    assert "#pragma HLS INTERFACE ap_ctrl_hs port=return" in source
+    assert "fifoWidthAdapter<SAFA_FIFO_WIDTH, INPUT_WIDTH, INPUT_WORDS>" in source
+    assert "fifoWidthAdapter<OUTPUT_WIDTH, SAFA_FIFO_WIDTH, OUTPUT_WORDS>" in source
+    assert "INPUT_WIDTH <= SAFA_FIFO_WIDTH" in source
+    assert "OUTPUT_WIDTH <= SAFA_FIFO_WIDTH" in source
+    assert "s_axilite" not in source
+
+
 def test_axi_stream_top_template_declares_interface_placeholders() -> None:
     source = (TEMPLATE_DIR / "axi_stream_top.cpp.tpl").read_text(encoding="utf-8")
 
@@ -67,9 +85,10 @@ def test_default_hls_config_template_exists() -> None:
     assert "flow_target=vivado" in source
     assert "syn.file=src/pipeline.cpp" in source
     assert "syn.top=top" in source
-    assert "package.output.format=ip_catalog" in source
+    assert "package.output.format=rtl" in source
     assert "package.output.syn=false" in source
-    assert "vivado.flow=syn" in source
+    assert "vivado.flow" not in source
+    assert source.count("syn.op=") == 24
 
 
 def test_resize_descriptor_selects_direct_vitis_calls_by_version() -> None:
@@ -83,3 +102,20 @@ def test_resize_descriptor_selects_direct_vitis_calls_by_version() -> None:
     assert call_2025.startswith("xf::cv::resize<")
     assert "@USE_URAM" not in call_2023
     assert "@USE_URAM" in call_2025
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ("dilate", "erode", "morph_open", "morph_close"),
+)
+def test_morphology_descriptors_use_composer_generated_kernel(stage: str) -> None:
+    implementation_path = (
+        ROOT
+        / "search_space/stages/implementations/hls/vitis_vision"
+        / f"{stage}.json"
+    )
+    implementation = json.loads(implementation_path.read_text(encoding="utf-8"))
+    function_source = "\n".join(implementation["function"])
+
+    assert "@kernel" in function_source
+    assert "unsigned char kernel[" not in function_source

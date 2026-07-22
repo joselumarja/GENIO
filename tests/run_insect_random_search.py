@@ -61,7 +61,7 @@ SEED = 0
 ROWS = 2160
 COLS = 3840
 FPGA_PART = "xa7a100tcsg324-1I"
-HLS_TIMEOUT_SECONDS = 5 * 60
+HLS_TIMEOUT_SECONDS = 30 * 60
 
 
 def stop_on_signal(signum, _frame) -> None:

@@ -249,7 +249,11 @@ class EvaluationExecutor:
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
-        task = step.create_task(individual, artifacts)
+        required_artifacts = EvaluationExecutor._resolve_required_artifacts(
+            step,
+            artifacts,
+        )
+        task = step.create_task(individual, required_artifacts)
         if not isinstance(task, step.task_type):
             msg = (
                 f"Evaluation step {step.id!r} declared task type "
@@ -258,6 +262,28 @@ class EvaluationExecutor:
             )
             raise EvaluationExecutionError(msg)
         return task
+
+    @staticmethod
+    def _resolve_required_artifacts(
+        step: EvaluationStep,
+        artifacts: Mapping[str, Artifact],
+    ) -> dict[str, Artifact]:
+        resolved: dict[str, Artifact] = {}
+        for artifact_key, artifact_type in step.required_artifacts.items():
+            artifact = artifacts.get(artifact_key)
+            if artifact is None:
+                raise EvaluationExecutionError(
+                    f"Evaluation step {step.id!r} requires artifact "
+                    f"{artifact_key!r}, but it was not produced."
+                )
+            if not isinstance(artifact, artifact_type):
+                raise EvaluationExecutionError(
+                    f"Evaluation step {step.id!r} requires artifact "
+                    f"{artifact_key!r} of type {artifact_type.__name__}, but received "
+                    f"{type(artifact).__name__}."
+                )
+            resolved[artifact_key] = artifact
+        return resolved
 
     def _accumulate_artifact(
         self,

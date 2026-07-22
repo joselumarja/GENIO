@@ -31,21 +31,46 @@
       }
     },
     "system": {
-      "platform": {
-        "type": "constant",
-        "value": "x-heep"
-      },
-      "mcu": {
+      "cpu": {
         "type": "choice",
-        "values": ["x-heep-small", "x-heep-big"]
+        "values": [
+          "cv32e20",
+          "cv32e40px"
+        ]
       },
-      "memory_size": {
+      "bus_type": {
         "type": "choice",
-        "values": [65536, 131072, 262144]
+        "values": [
+          "onetoM",
+          "NtoM"
+        ]
       },
-      "memory_type": {
+      "memory_profile": {
         "type": "choice",
-        "values": ["sram", "tcdm"]
+        "values": [
+          "continuous_2x128",
+          "continuous_4x64",
+          "continuous_8x32",
+          "mixed_2x64_il4x32",
+          "mixed_4x32_il4x32"
+        ]
+      },
+      "memory_placement": {
+        "type": "choice",
+        "values": [
+          "shared_data",
+          "separate_code_input_output",
+          "input_output_interleaved"
+        ]
+      },
+      "dma_fifo_depth": {
+        "type": "choice",
+        "values": [
+          2,
+          4,
+          8,
+          16
+        ]
       }
     }
   },
