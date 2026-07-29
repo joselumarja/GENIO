@@ -1,4 +1,4 @@
-"""Run a small random search over the insect segmentation pipeline."""
+"""Run functional, HLS and X-HEEP evaluation for insect segmentation."""
 
 import os
 from pathlib import Path
@@ -22,8 +22,9 @@ from genio import (  # noqa: E402
     PythonImageFunctionalEvaluationStep,
     PythonImagePipelineComposer,
     RandomSearch,
-    GridSearch,
     SearchSpace,
+    GRHeepConfigurationComposer,
+    XHeepVerilatorSimulationEvaluationStep,
 )
 
 
@@ -51,17 +52,21 @@ VITIS_LIBRARIES_PATH = Path(
     os.environ.get("VITIS_LIBRARIES_PATH", ROOT / "Vitis_Libraries")
 )
 HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
-OUTPUT_DIR = ROOT / "tmp/insect_random_search"
+OUTPUT_DIR = ROOT / "tmp/insect_xheep_random_search"
 
-MAX_EVALUATIONS = 10
-BATCH_SIZE = 2
+MAX_EVALUATIONS = 12
+BATCH_SIZE = 4
 MAX_WORKERS = 2
 SEED = 0
 
-ROWS = 2160
-COLS = 3840
+# Keep a real-image-sized workload that fits comfortably in internal X-HEEP SRAM.
+ROWS = 108
+COLS = 192
 FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 30 * 60
+
+GR_HEEP_PATH = Path("/home/joselu/Integration/GEN-HEEP")
+XHEEP_TIMEOUT_SECONDS = 30 * 60
 
 
 def stop_on_signal(signum, _frame) -> None:
@@ -69,16 +74,23 @@ def stop_on_signal(signum, _frame) -> None:
 
 
 def main() -> None:
-    search_space = SearchSpace(ROOT / "search_space/tests/insect_segmentation_pipeline.json", ROOT / "search_space/stages/definitions")
-    algorithm = RandomSearch(max_evaluations=MAX_EVALUATIONS, batch_size=BATCH_SIZE, unique=True, balanced=True, random=Random(SEED))
-    #search_space = SearchSpace(ROOT / "search_space/tests/tfg_pipeline.json", ROOT / "search_space/stages/definitions")
-    #algorithm = GridSearch()
+    search_space = SearchSpace(
+        ROOT / "search_space/tests/insect_xheep_exploration_pipeline.json",
+        ROOT / "search_space/stages/definitions",
+    )
+    algorithm = RandomSearch(
+        max_evaluations=MAX_EVALUATIONS,
+        batch_size=BATCH_SIZE,
+        unique=True,
+        balanced=True,
+        random=Random(SEED),
+    )
 
     functional_step = PythonImageFunctionalEvaluationStep(
         composer=PythonImagePipelineComposer(ROOT / "search_space/stages/definitions"),
         images_path=IMAGES_PATH,
         references_path=MASKS_PATH,
-        metrics=("mask_f1", ),
+        metrics=("mask_f1",),
     )
     hls_step = HLSImagePipelineSynthesisEvaluationStep(
         depends_on=(functional_step.id,),
@@ -88,21 +100,37 @@ def main() -> None:
             vitis_version=VITIS_VERSION,
             rows=ROWS,
             cols=COLS,
+            interface="safa_fifo",
         ),
         part=FPGA_PART,
-        metadata={
-            "execution": {
-                "timeout_seconds": HLS_TIMEOUT_SECONDS,
-            }
-        },
+        metadata={"execution": {"timeout_seconds": HLS_TIMEOUT_SECONDS}},
     )
-    workflow = EvaluationWorkflow((functional_step, hls_step))
+
+    """xheep_step = XHeepVerilatorSimulationEvaluationStep(
+        depends_on=(hls_step.id,),
+        composer=GRHeepConfigurationComposer(
+            ROOT / "search_space/stages/definitions",
+            templates_path=ROOT / "gr_heep_templates",
+        ),
+        gr_heep_path=GR_HEEP_PATH,
+        input_image_path=next(
+            path for path in sorted(IMAGES_PATH.iterdir()) if path.is_file()
+        ),
+        metadata={"execution": {"timeout_seconds": XHEEP_TIMEOUT_SECONDS}},
+    )"""
+    xheep_step = XHeepVerilatorSimulationEvaluationStep(
+            depends_on=(hls_step.id,),
+            composer=GRHeepConfigurationComposer(
+                ROOT / "search_space/stages/definitions",
+                templates_path=ROOT / "gr_heep_templates",
+            ),
+            gr_heep_path=GR_HEEP_PATH,
+            metadata={"execution": {"timeout_seconds": XHEEP_TIMEOUT_SECONDS}},
+        )
+    workflow = EvaluationWorkflow((functional_step, hls_step, xheep_step))
 
     cache = LFUArtifactCache(
-        {
-            functional_step.id: 64,
-            hls_step.id: 16,
-        }
+        {functional_step.id: 64, hls_step.id: 16, xheep_step.id: 8}
     )
     statistics = CSVStatisticsCollector(OUTPUT_DIR / "statistics")
 
@@ -116,11 +144,13 @@ def main() -> None:
                 "hls_include_paths": [
                     str(HLS_IMPLEMENTATIONS_INCLUDE_PATH.resolve()),
                 ],
+                "gr_heep_path": str(GR_HEEP_PATH),
+                "xheep_timeout_seconds": XHEEP_TIMEOUT_SECONDS,
             },
         ) as backend:
             result = OptimizationSession(
-                id="insect_random_search",
-                run_id="insect_random_search",
+                id="insect_xheep_random_search",
+                run_id="insect_xheep_random_search",
                 search_space=search_space,
                 algorithm=algorithm,
                 backend=backend,

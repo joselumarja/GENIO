@@ -1,4 +1,10 @@
-from genio.algorithm import GeneticSearch, GridSearch, RandomSearch, SearchAlgorithm
+from genio.algorithm import (
+    GeneticSearch,
+    GridSearch,
+    NSGA2Search,
+    RandomSearch,
+    SearchAlgorithm,
+)
 from genio.artifacts import (
     Artifact,
     ArtifactError,
@@ -6,6 +12,7 @@ from genio.artifacts import (
     HLSRTLArtifact,
     ImageFunctionalMetricsArtifact,
     MetricArtifact,
+    XHeepSimulationArtifact,
 )
 from genio.backend import (
     Backend,
@@ -33,6 +40,8 @@ from genio.composer import (
     Composer,
     ComposerError,
     ExecutionPackage,
+    GRHeepConfigurationComposer,
+    GRHeepConfigurationPackage,
     HLSExecutionPackage,
     HLSImagePipelineComposer,
     PythonExecutionPackage,
@@ -65,6 +74,12 @@ from genio.evaluation import (
     ImageFunctionalQualityError,
     PythonImageFunctionalEvaluationStep,
     PythonImageFunctionalTask,
+    XHeepVerilatorSimulationConfigurationError,
+    XHeepVerilatorSimulationError,
+    XHeepVerilatorSimulationEvaluationStep,
+    XHeepVerilatorSimulationResultError,
+    XHeepVerilatorSimulationTask,
+    XHeepVerilatorSimulationTimeoutError,
 )
 from genio.objective import (
     MetricObjective,
@@ -109,6 +124,8 @@ __all__ = [
     "ExecutionContext",
     "GeneticSearch",
     "GridSearch",
+    "GRHeepConfigurationComposer",
+    "GRHeepConfigurationPackage",
     "HLSImagePipelineSynthesisConfigurationError",
     "HLSImagePipelineSynthesisError",
     "HLSImagePipelineSynthesisTimeoutError",
@@ -127,6 +144,7 @@ __all__ = [
     "LFUArtifactCache",
     "MetricArtifact",
     "MetricObjective",
+    "NSGA2Search",
     "Objective",
     "ObjectiveError",
     "ObjectiveSet",
@@ -152,5 +170,12 @@ __all__ = [
     "StageDefinitionNotFoundError",
     "StageChoice",
     "UnknownEvaluationHandleError",
+    "XHeepSimulationArtifact",
+    "XHeepVerilatorSimulationConfigurationError",
+    "XHeepVerilatorSimulationError",
+    "XHeepVerilatorSimulationEvaluationStep",
+    "XHeepVerilatorSimulationResultError",
+    "XHeepVerilatorSimulationTask",
+    "XHeepVerilatorSimulationTimeoutError",
     "dominates",
 ]

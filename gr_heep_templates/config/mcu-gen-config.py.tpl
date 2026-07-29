@@ -40,11 +40,12 @@ def config():
 
     memory_ss = MemorySS()
     memory_ss.add_ram_banks(@RAM_BANKS@)
-    memory_ss.add_ram_banks_il(
-        @INTERLEAVED_BANK_COUNT@,
-        @INTERLEAVED_BANK_SIZE@,
-        "data_interleaved",
-    )
+    if @INTERLEAVED_BANK_COUNT@:
+        memory_ss.add_ram_banks_il(
+            @INTERLEAVED_BANK_COUNT@,
+            @INTERLEAVED_BANK_SIZE@,
+            "data_interleaved",
+        )
     memory_ss.add_linker_section(
         LinkerSection.by_size("code", 0, @CODE_SECTION_END@)
     )
@@ -112,7 +113,7 @@ def gr_heep_config():
         }
     }
     ao_spc_num = 1
-    external_interrupts = 0
+    external_interrupts = 1
     hw_fifo_channels = @HW_FIFO_CHANNELS@
 
     slaves = []

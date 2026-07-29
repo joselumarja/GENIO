@@ -144,7 +144,21 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         origin = "hls_synthesis"
         configuration_metadata = {
             key: package.package_metadata[key]
-            for key in ("interface", "vitis_version")
+            for key in (
+                "interface",
+                "vitis_version",
+                "input_type",
+                "output_type",
+                "input_rows",
+                "input_cols",
+                "input_npc",
+                "output_rows",
+                "output_cols",
+                "output_npc",
+                "bus_width",
+                "input_words",
+                "output_words",
+            )
             if package.package_metadata.get(key) is not None
         }
         metadata_path = context.write_json(

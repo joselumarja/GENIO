@@ -312,6 +312,15 @@ def test_hls_image_pipeline_composer_generates_fifo_package():
     assert package.metadata["include_dirs"] == ("include",)
     assert package.metadata["required_backend_resources"] == ("vitis_libraries_path",)
     assert package.metadata["output_type"] == "XF_8UC1"
+    assert package.metadata["input_rows"] == 64
+    assert package.metadata["input_cols"] == 128
+    assert package.metadata["input_npc"] == "XF_NPPC2"
+    assert package.metadata["output_rows"] == 64
+    assert package.metadata["output_cols"] == 128
+    assert package.metadata["output_npc"] == "XF_NPPC2"
+    assert package.metadata["bus_width"] == 32
+    assert package.metadata["input_words"] == 6144
+    assert package.metadata["output_words"] == 2048
     assert "#define ROWS 64" in source
     assert "#define COLS 128" in source
     assert "#define NPC XF_NPPC2" in source

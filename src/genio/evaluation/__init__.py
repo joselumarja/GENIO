@@ -14,6 +14,14 @@ from genio.evaluation.image_functional import (
 from genio.evaluation.step import EvaluationStep
 from genio.evaluation.task import CommandResult, EvaluationTask, ExecutionContext
 from genio.evaluation.workflow import EvaluationWorkflow, EvaluationWorkflowError
+from genio.evaluation.xheep_verilator_simulation import (
+    XHeepVerilatorSimulationConfigurationError,
+    XHeepVerilatorSimulationError,
+    XHeepVerilatorSimulationEvaluationStep,
+    XHeepVerilatorSimulationResultError,
+    XHeepVerilatorSimulationTask,
+    XHeepVerilatorSimulationTimeoutError,
+)
 
 __all__ = [
     "EvaluationExecutor",
@@ -28,6 +36,12 @@ __all__ = [
     "ImageFunctionalQualityError",
     "PythonImageFunctionalEvaluationStep",
     "PythonImageFunctionalTask",
+    "XHeepVerilatorSimulationConfigurationError",
+    "XHeepVerilatorSimulationError",
+    "XHeepVerilatorSimulationEvaluationStep",
+    "XHeepVerilatorSimulationResultError",
+    "XHeepVerilatorSimulationTask",
+    "XHeepVerilatorSimulationTimeoutError",
     "CommandResult",
     "ExecutionContext",
     "EvaluationWorkflow",

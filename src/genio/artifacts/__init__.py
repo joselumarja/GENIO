@@ -4,6 +4,7 @@ from genio.artifacts.hls_synthesis import (
     HLSRTLArtifact,
 )
 from genio.artifacts.image_functional import ImageFunctionalMetricsArtifact
+from genio.artifacts.xheep_simulation import XHeepSimulationArtifact
 
 __all__ = [
     "Artifact",
@@ -12,4 +13,5 @@ __all__ = [
     "HLSRTLArtifact",
     "ImageFunctionalMetricsArtifact",
     "MetricArtifact",
+    "XHeepSimulationArtifact",
 ]

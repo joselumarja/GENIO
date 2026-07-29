@@ -16,6 +16,7 @@ def test_mcu_gen_template_exposes_gr_heep_configuration_tokens() -> None:
     assert "num_channels=@DMA_NUM_CHANNELS@" in source
     assert 'hw_fifo_mode="yes"' in source
     assert "hw_fifo_channels = @HW_FIFO_CHANNELS@" in source
+    assert "external_interrupts = 1" in source
     assert '"SAFA"' in source
 
 
@@ -28,6 +29,11 @@ def test_safa_wrapper_template_uses_dynamic_hls_top_module() -> None:
     assert ".BUS_IN_dout" in source
     assert ".BUS_OUT_din" in source
     assert ".ap_start" in source
+    assert "REG_ACTIVE_CYCLES" in source
+    assert "REG_INPUT_STALLS" in source
+    assert "REG_OUTPUT_STALLS" in source
+    assert "REG_DMA_PUSH_STALLS" in source
+    assert "REG_DMA_POP_STALLS" in source
     assert " top i_hls_top" not in source
 
 

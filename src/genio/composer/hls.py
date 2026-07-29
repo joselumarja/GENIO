@@ -189,6 +189,21 @@ class HLSImagePipelineComposer(Composer):
             notes=notes,
             hls_design=hls_design,
         )
+        input_npc = str(hls_design.get("npc", self.npc))
+        input_words = self._bus_words(
+            rows=self.rows,
+            cols=self.cols,
+            image_type=self.image_type,
+            npc=input_npc,
+            require_safa_compatible=self.interface == "safa_fifo",
+        )
+        output_words = self._bus_words(
+            rows=int(current_rows),
+            cols=int(current_cols),
+            image_type=current_type,
+            npc=current_npc,
+            require_safa_compatible=self.interface == "safa_fifo",
+        )
 
         files = {
             "src/pipeline.cpp": source,
@@ -214,6 +229,15 @@ class HLSImagePipelineComposer(Composer):
                 "top_function": self.top_function,
                 "input_type": self.image_type,
                 "output_type": current_type,
+                "input_rows": self.rows,
+                "input_cols": self.cols,
+                "input_npc": input_npc,
+                "output_rows": int(current_rows),
+                "output_cols": int(current_cols),
+                "output_npc": current_npc,
+                "bus_width": 32,
+                "input_words": input_words,
+                "output_words": output_words,
                 "rows": self.rows,
                 "cols": self.cols,
                 "npc": current_npc,
@@ -666,6 +690,35 @@ class HLSImagePipelineComposer(Composer):
     @staticmethod
     def _note_lines(notes: list[str]) -> list[str]:
         return [f"    // TODO {note}" for note in notes]
+
+    @staticmethod
+    def _bus_words(
+        *,
+        rows: int,
+        cols: int,
+        image_type: str,
+        npc: str,
+        require_safa_compatible: bool,
+    ) -> int:
+        match = re.fullmatch(r"XF_(\d+)[USF]C(\d+)", image_type)
+        if match is None:
+            raise ComposerError(f"Cannot determine pixel width for {image_type!r}.")
+        pixel_bits = int(match.group(1)) * int(match.group(2))
+        npc_match = re.fullmatch(r"XF_NPPC(\d+)", npc)
+        if npc_match is None:
+            raise ComposerError(f"Cannot determine pixels per clock for {npc!r}.")
+        stream_width = pixel_bits * int(npc_match.group(1))
+        total_bits = rows * cols * pixel_bits
+        if require_safa_compatible and stream_width > 32:
+            raise ComposerError(
+                f"SAFA FIFO requires stream widths of at most 32 bits; got "
+                f"{stream_width} for {image_type} with {npc}."
+            )
+        if require_safa_compatible and total_bits % 32:
+            raise ComposerError(
+                "SAFA FIFO requires frames containing a whole number of 32-bit words."
+            )
+        return (total_bits + 31) // 32
 
     def _hls_literal(self, value: Any) -> str:
         if isinstance(value, str):

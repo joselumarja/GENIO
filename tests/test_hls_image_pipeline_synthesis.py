@@ -267,6 +267,17 @@ def test_hls_rtl_artifact_preserves_interface_and_vitis_version(tmp_path) -> Non
                 "top_function": "safa_accelerator",
                 "interface": "safa_fifo",
                 "vitis_version": "2025.2",
+                "input_type": "XF_8UC3",
+                "output_type": "XF_8UC1",
+                "input_rows": 48,
+                "input_cols": 48,
+                "input_npc": "XF_NPPC1",
+                "output_rows": 48,
+                "output_cols": 48,
+                "output_npc": "XF_NPPC1",
+                "bus_width": 32,
+                "input_words": 1728,
+                "output_words": 576,
             },
         ),
         _HLSRunResult(work_dir=work_dir),
@@ -274,6 +285,11 @@ def test_hls_rtl_artifact_preserves_interface_and_vitis_version(tmp_path) -> Non
 
     assert artifact.metadata["interface"] == "safa_fifo"
     assert artifact.metadata["vitis_version"] == "2025.2"
+    assert artifact.metadata["input_rows"] == 48
+    assert artifact.metadata["output_cols"] == 48
+    assert artifact.metadata["output_type"] == "XF_8UC1"
+    assert artifact.metadata["input_words"] == 1728
+    assert artifact.metadata["output_words"] == 576
     descriptor = json.loads(Path(artifact.metadata["path"]).read_text(encoding="utf-8"))
     assert descriptor["interface"] == "safa_fifo"
     assert descriptor["vitis_version"] == "2025.2"
