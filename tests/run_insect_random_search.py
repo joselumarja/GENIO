@@ -54,9 +54,9 @@ VITIS_LIBRARIES_PATH = Path(
 HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
 OUTPUT_DIR = ROOT / "tmp/insect_xheep_random_search"
 
-MAX_EVALUATIONS = 12
+MAX_EVALUATIONS = 20
 BATCH_SIZE = 4
-MAX_WORKERS = 2
+MAX_WORKERS = 4
 SEED = 0
 
 # Keep a real-image-sized workload that fits comfortably in internal X-HEEP SRAM.

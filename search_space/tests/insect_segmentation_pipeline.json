@@ -45,15 +45,17 @@
           "NtoM"
         ]
       },
-      "memory_profile": {
+      "memory_total_kib": {
         "type": "choice",
-        "values": [
-          "continuous_2x128",
-          "continuous_4x64",
-          "continuous_8x32",
-          "mixed_2x64_il4x32",
-          "mixed_4x32_il4x32"
-        ]
+        "values": [128, 256, 512]
+      },
+      "memory_bank_size_kib": {
+        "type": "choice",
+        "values": [16, 32]
+      },
+      "memory_interleaved_ratio": {
+        "type": "choice",
+        "values": [0, 50]
       },
       "memory_placement": {
         "type": "choice",

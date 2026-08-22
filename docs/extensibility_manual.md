@@ -898,6 +898,19 @@ Crear una subclase de `EvaluationStep` y una subclase de `EvaluationTask` asocia
 EvaluationStep.create_task -> EvaluationTask.run
 ```
 
+El framework incluye como referencia un workflow de tres fases:
+
+```text
+PythonImageFunctionalEvaluationStep
+    -> HLSImagePipelineSynthesisEvaluationStep
+    -> XHeepVerilatorSimulationEvaluationStep
+```
+
+El último step demuestra cómo consumir un artefacto RTL, materializar un checkout
+externo aislado, preservar symlinks, ejecutar comandos dentro de Conda y convertir
+líneas `GENIO_METRIC:nombre:valor` en métricas. Véase
+[Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
+
 ### Necesito Un Nuevo Backend
 
 Crear una subclase de `Backend` si la ejecucion no cabe en `LocalBackend`.

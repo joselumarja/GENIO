@@ -279,7 +279,7 @@ design_spaces: dict[str, dict[str, tuple[Any, ...]]]
 metadata: dict[str, Any]
 ```
 
-`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. Por ejemplo, un dominio `hls` puede ser usado por `HLSImagePipelineSynthesisEvaluationStep`, mientras que un dominio `system` puede ser usado por un futuro step de integración o evaluación de plataforma.
+`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. El dominio `hls` es consumido por `HLSImagePipelineSynthesisEvaluationStep`; el dominio `system`, por `GRHeepConfigurationComposer` y `XHeepVerilatorSimulationEvaluationStep`.
 
 ### `SlotSpec`
 
@@ -337,7 +337,9 @@ metadata: dict[str, Any]
         "pipeline_ii": 1,
     },
     "system": {
-        "memory_size": 65536,
+        "memory_total_kib": 256,
+        "memory_bank_size_kib": 32,
+        "memory_interleaved_ratio": 50,
     },
 }
 ```
@@ -852,7 +854,7 @@ read_bytes(path: str | Path) -> bytes
 write_json(path: str | Path, data: Any, *, encoding="utf-8", indent=2) -> Path
 read_json(path: str | Path, *, encoding="utf-8") -> Any
 copy_file(source: str | Path, target: str | Path) -> Path
-copy_tree(source: str | Path, target: str | Path, *, dirs_exist_ok=True) -> Path
+copy_tree(source: str | Path, target: str | Path, *, dirs_exist_ok=True, symlinks=False) -> Path
 write_log(task: EvaluationTask, name: str, content: str) -> Path
 merged_env(env: Mapping[str, str] | None = None) -> dict[str, str]
 run_command(command: Sequence[str], *, cwd=None, env=None, timeout=None, check=True) -> CommandResult
@@ -865,6 +867,8 @@ Responsabilidades:
 - Transportar metadata de runtime por task.
 - Mantener las tasks desacopladas del backend concreto.
 - Proporcionar helpers genericos de filesystem, logs, entorno y ejecucion de comandos.
+- Preservar opcionalmente enlaces simbolicos al copiar checkouts externos. La
+  integración GR-HEEP lo necesita para mantener `sw/build` enlazado al build de X-HEEP.
 
 Regla:
 
@@ -1071,6 +1075,13 @@ original del checkout activo, sin reimplementar funciones de Vitis Vision.
 el override `GENIO_VITIS_VERSION` y acepta `VITIS_LIBRARIES_PATH` para seleccionar
 el checkout de librerías que corresponde al entorno activo.
 
+El workflow puede continuar con `XHeepVerilatorSimulationEvaluationStep`, que consume
+el RTL `safa_fifo`, compone un overlay GR-HEEP aislado y ejecuta X-HEEP/Verilator en el
+entorno Conda `core-v-mini-mcu`. Esta task conserva los symlinks del checkout base,
+inyecta una imagen real o sintética, genera tráfico con un segundo DMA y extrae las
+etiquetas `GENIO_PERF`, `GENIO_METRIC` y `GENIO_STATUS`. La guía de uso completa está
+en [Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
+
 `EvaluationExecutor.evaluate_many` envia una ola por step del workflow. Los fallos de una task se convierten en `Result.failed` solo para su individual; ese individual no avanza a steps posteriores y el resto del batch continua. Los errores de contrato del framework siguen propagandose como excepciones.
 
 ### `SSHBackend`
@@ -1255,6 +1266,7 @@ EvaluationTask.cache_inputs() -> Mapping[str, Any] | None
 ```text
 Python: pipeline
 HLS: pipeline + design.hls
+X-HEEP: pipeline + design.hls + design.system + RTL HLS + configuración GR-HEEP
 ```
 
 `LFUArtifactCache` separa capacidades por `step.id`, expulsa la entrada con menor frecuencia y usa recencia como desempate. Los misses equivalentes de un mismo batch se agrupan y ejecutan mediante un unico representante.

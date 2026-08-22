@@ -109,6 +109,34 @@ def test_xheep_commands_run_in_core_v_mini_mcu_conda_environment(tmp_path) -> No
         "make",
         "mcu-gen",
     )
+    assert task.commands[-1] == ("make", "verilator-run")
+
+
+def test_xheep_checkout_preserves_external_software_build_symlink(tmp_path) -> None:
+    source = tmp_path / "GEN-HEEP"
+    vendor_build = source / "hw/vendor/x-heep/sw/build"
+    vendor_build.mkdir(parents=True)
+    (source / "sw").mkdir()
+    (source / "sw/build").symlink_to("../hw/vendor/x-heep/sw/build")
+    task = XHeepVerilatorSimulationTask(
+        individual=Individual.from_slots(
+            id="symlink",
+            scenario="scenario",
+            design={"system": {}},
+            slots=[StageChoice(slot=0, stage="nop")],
+        ),
+        step_id="xheep_verilator_simulation",
+        composer=make_composer(),
+        hls_artifact=make_artifact(tmp_path),
+    )
+    context = ExecutionContext(base_work_dir=tmp_path / "work")
+
+    checkout = task._copy_checkout(context, source)
+
+    assert (checkout / "sw/build").is_symlink()
+    assert (checkout / "sw/build").readlink() == Path(
+        "../hw/vendor/x-heep/sw/build"
+    )
 
 
 def test_xheep_task_injects_rtl_and_parses_simulation_metrics(tmp_path) -> None:

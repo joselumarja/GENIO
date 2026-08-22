@@ -185,13 +185,19 @@ class ExecutionContext:
         target: str | Path,
         *,
         dirs_exist_ok: bool = True,
+        symlinks: bool = False,
     ) -> Path:
         """Copy a directory tree to a resolved target path."""
 
         resolved_source = Path(source)
         resolved_target = self.resolve_path(target)
         resolved_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(resolved_source, resolved_target, dirs_exist_ok=dirs_exist_ok)
+        shutil.copytree(
+            resolved_source,
+            resolved_target,
+            dirs_exist_ok=dirs_exist_ok,
+            symlinks=symlinks,
+        )
         return resolved_target
 
     def write_log(self, task: EvaluationTask, name: str, content: str) -> Path:

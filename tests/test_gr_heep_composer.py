@@ -121,11 +121,13 @@ def test_gr_heep_composer_defaults_match_current_gen_heep_configuration() -> Non
 
 def test_gr_heep_composer_resolves_search_space_memory_configuration() -> None:
     individual = Individual.from_slots(
-        id="memory_profile",
-        scenario="memory_profile",
+        id="memory_configuration",
+        scenario="memory_configuration",
         design={
             "system": {
-                "memory_profile": "mixed_2x64_il4x32",
+                "memory_total_kib": 256,
+                "memory_bank_size_kib": 32,
+                "memory_interleaved_ratio": 50,
                 "memory_placement": "input_output_interleaved",
             }
         },
@@ -135,12 +137,16 @@ def test_gr_heep_composer_resolves_search_space_memory_configuration() -> None:
     package = make_composer().compose(individual)
     config = package.files["config/mcu-gen-config.py"]
 
-    assert "memory_ss.add_ram_banks([64] * 2)" in config
+    assert "memory_ss.add_ram_banks([32] * 4)" in config
     assert "if 4:" in config
     assert "        4," in config
     assert "        32," in config
     assert "LinkerSection.by_size(\"code\", 0, 0x00010000)" in config
-    assert package.metadata["rendered_configuration"]["RAM_BANKS"] == "[64] * 2"
+    rendered = package.metadata["rendered_configuration"]
+    assert rendered["RAM_BANKS"] == "[32] * 4"
+    assert rendered["MEMORY_TOTAL_KIB"] == "256"
+    assert rendered["MEMORY_CONTINUOUS_KIB"] == "128"
+    assert rendered["MEMORY_INTERLEAVED_KIB"] == "128"
 
 
 def test_gr_heep_composer_applies_native_system_hyperparameters() -> None:
@@ -184,7 +190,9 @@ def test_xheep_search_space_system_keys_have_composer_equivalents() -> None:
     assert system_keys == {
         "cpu",
         "bus_type",
-        "memory_profile",
+        "memory_total_kib",
+        "memory_bank_size_kib",
+        "memory_interleaved_ratio",
         "memory_placement",
         "dma_fifo_depth",
         "accelerator_fifo_depth",
@@ -198,7 +206,9 @@ def test_xheep_search_space_system_keys_have_composer_equivalents() -> None:
             "system": {
                 "cpu": "cv32e20",
                 "bus_type": "NtoM",
-                "memory_profile": "mixed_2x64_il4x32",
+                "memory_total_kib": 256,
+                "memory_bank_size_kib": 32,
+                "memory_interleaved_ratio": 50,
                 "memory_placement": "shared_data",
                 "dma_fifo_depth": 8,
                 "accelerator_fifo_depth": 8,
@@ -218,7 +228,7 @@ def test_xheep_search_space_system_keys_have_composer_equivalents() -> None:
 
     assert 'CPU("cv32e20")' in config
     assert "XHeep(BusType.NtoM)" in config
-    assert "memory_ss.add_ram_banks([64] * 2)" in config
+    assert "memory_ss.add_ram_banks([32] * 4)" in config
     assert "LinkerSection.by_size(\"code\", 0, 0x00018000)" in config
     assert "fifo_depth=8" in config
     assert "FIFO_DEPTH = 8" in wrapper
@@ -228,18 +238,75 @@ def test_xheep_search_space_system_keys_have_composer_equivalents() -> None:
 
 def test_gr_heep_composer_rejects_incompatible_interleaved_placement() -> None:
     individual = Individual.from_slots(
-        id="bad_memory_profile",
-        scenario="bad_memory_profile",
+        id="bad_memory_placement",
+        scenario="bad_memory_placement",
         design={
             "system": {
-                "memory_profile": "continuous_4x64",
+                "memory_total_kib": 256,
+                "memory_bank_size_kib": 32,
+                "memory_interleaved_ratio": 0,
                 "memory_placement": "input_output_interleaved",
             }
         },
         slots=[StageChoice(slot=0, stage="nop")],
     )
 
-    with pytest.raises(ComposerError, match="requires a mixed"):
+    with pytest.raises(ComposerError, match="requires interleaved banks"):
+        make_composer().compose(individual)
+
+
+@pytest.mark.parametrize(
+    ("system", "message"),
+    (
+        (
+            {
+                "memory_total_kib": 250,
+                "memory_bank_size_kib": 32,
+                "memory_interleaved_ratio": 50,
+                "memory_placement": "shared_data",
+            },
+            "must be divisible",
+        ),
+        (
+            {
+                "memory_total_kib": 256,
+                "memory_bank_size_kib": 32,
+                "memory_interleaved_ratio": 100,
+                "memory_placement": "shared_data",
+            },
+            "between 0 and 99",
+        ),
+        (
+            {
+                "memory_total_kib": 256,
+                "memory_bank_size_kib": 32,
+                "memory_placement": "shared_data",
+            },
+            "requires memory_total_kib",
+        ),
+        (
+            {
+                "memory_total_kib": 192,
+                "memory_bank_size_kib": 16,
+                "memory_interleaved_ratio": 50,
+                "memory_placement": "shared_data",
+            },
+            "must be a power of two",
+        ),
+    ),
+)
+def test_gr_heep_composer_rejects_invalid_incremental_memory(
+    system,
+    message,
+) -> None:
+    individual = Individual.from_slots(
+        id="bad_memory",
+        scenario="bad_memory",
+        design={"system": system},
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+
+    with pytest.raises(ComposerError, match=message):
         make_composer().compose(individual)
 
 

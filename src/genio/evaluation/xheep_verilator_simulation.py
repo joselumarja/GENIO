@@ -212,7 +212,7 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             )
         if checkout_dir.exists():
             shutil.rmtree(checkout_dir)
-        context.copy_tree(source, checkout_dir, dirs_exist_ok=False)
+        context.copy_tree(source, checkout_dir, dirs_exist_ok=False, symlinks=True)
         return checkout_dir
 
     def _apply_overlay(

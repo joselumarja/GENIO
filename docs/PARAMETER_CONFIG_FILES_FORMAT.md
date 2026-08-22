@@ -29,9 +29,17 @@ Un archivo de configuración tiene esta forma:
       }
     },
     "system": {
-      "memory_size": {
+      "memory_total_kib": {
         "type": "choice",
-        "values": [32768, 65536]
+      "values": [128, 256, 512]
+      },
+      "memory_bank_size_kib": {
+        "type": "choice",
+        "values": [16, 32]
+      },
+      "memory_interleaved_ratio": {
+        "type": "choice",
+        "values": [0, 50]
       }
     }
   },
@@ -143,13 +151,21 @@ Ejemplo:
     }
   },
   "system": {
-    "memory_size": {
+    "memory_total_kib": {
       "type": "choice",
-      "values": [32768, 65536, 131072]
+      "values": [192, 256, 320]
     },
-    "mcu": {
+    "memory_bank_size_kib": {
       "type": "choice",
-      "values": ["x-heep-small", "x-heep-big"]
+      "values": [16, 32]
+    },
+    "memory_interleaved_ratio": {
+      "type": "choice",
+      "values": [0, 50]
+    },
+    "cpu": {
+      "type": "choice",
+      "values": ["cv32e20", "cv32e40px"]
     }
   }
 }
@@ -175,11 +191,36 @@ individual.design == {
         "array_partition": "complete",
     },
     "system": {
-        "memory_size": 65536,
-        "mcu": "x-heep-small",
+        "memory_total_kib": 256,
+        "memory_bank_size_kib": 32,
+        "memory_interleaved_ratio": 50,
+        "cpu": "cv32e20",
     },
 }
 ```
+
+### Parámetros X-HEEP Y SAFA
+
+`GRHeepConfigurationComposer` consume actualmente estas claves de `design.system`:
+
+| Clave | Restricción principal |
+|---|---|
+| `cpu` | Identificador de CPU soportado por X-HEEP. |
+| `bus_type` | Identificador de topología soportado. |
+| `dma_fifo_depth` | Entero positivo admitido por el generador DMA. |
+| `accelerator_fifo_depth` | Entero positivo. |
+| `accelerator_fifo_almost_full_margin` | Positivo y menor que la profundidad SAFA. |
+| `memory_total_kib` | Capacidad total positiva. |
+| `memory_bank_size_kib` | Tamaño positivo que divide ambas capacidades derivadas. |
+| `memory_interleaved_ratio` | Entero entre 0 y 99; el número derivado de bancos entrelazados debe ser potencia de dos. |
+| `memory_placement` | `shared_data`, `separate_code_input_output` o `input_output_interleaved`. |
+
+Las cuatro claves de memoria deben aparecer juntas. El composer calcula el número de
+bancos continuos y entrelazados; no se utiliza un `memory_profile` nominal. Mantener
+fija `memory_total_kib` y variar el ratio permite comparar organizaciones sin confundir
+interleaving con capacidad adicional.
+
+Véase [Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
 
 El genotype y el `search_index` sí representan el espacio completo:
 
@@ -625,9 +666,17 @@ wrapper_inputs
       }
     },
     "system": {
-      "memory_size": {
+      "memory_total_kib": {
         "type": "choice",
-        "values": [32768, 65536]
+      "values": [128, 256, 512]
+      },
+      "memory_bank_size_kib": {
+        "type": "choice",
+        "values": [16, 32]
+      },
+      "memory_interleaved_ratio": {
+        "type": "choice",
+        "values": [0, 50]
       }
     }
   },

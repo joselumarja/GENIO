@@ -77,33 +77,6 @@ class GRHeepConfigurationPackage(ExecutionPackage):
 class GRHeepConfigurationComposer(Composer):
     """Render GR-HEEP configuration and application overlay files."""
 
-    MEMORY_PROFILES = {
-        "continuous_2x128": {
-            "RAM_BANKS": "[128] * 2",
-            "INTERLEAVED_BANK_COUNT": "0",
-            "INTERLEAVED_BANK_SIZE": "0",
-        },
-        "continuous_4x64": {
-            "RAM_BANKS": "[64] * 4",
-            "INTERLEAVED_BANK_COUNT": "0",
-            "INTERLEAVED_BANK_SIZE": "0",
-        },
-        "continuous_8x32": {
-            "RAM_BANKS": "[32] * 8",
-            "INTERLEAVED_BANK_COUNT": "0",
-            "INTERLEAVED_BANK_SIZE": "0",
-        },
-        "mixed_2x64_il4x32": {
-            "RAM_BANKS": "[64] * 2",
-            "INTERLEAVED_BANK_COUNT": "4",
-            "INTERLEAVED_BANK_SIZE": "32",
-        },
-        "mixed_4x32_il4x32": {
-            "RAM_BANKS": "[32] * 4",
-            "INTERLEAVED_BANK_COUNT": "4",
-            "INTERLEAVED_BANK_SIZE": "32",
-        },
-    }
     MEMORY_PLACEMENTS = {
         "shared_data": {
             "CODE_SECTION_END": "0x00018000",
@@ -244,7 +217,12 @@ class GRHeepConfigurationComposer(Composer):
                     set(system_design).difference(
                         native_bindings,
                         self.parameter_bindings,
-                        {"memory_profile", "memory_placement"},
+                        {
+                            "memory_total_kib",
+                            "memory_bank_size_kib",
+                            "memory_interleaved_ratio",
+                            "memory_placement",
+                        },
                     )
                 ),
                 "rendered_configuration": {
@@ -566,30 +544,70 @@ class GRHeepConfigurationComposer(Composer):
     def _memory_configuration(cls, system_design: Mapping[str, Any]) -> dict[str, str]:
         """Resolve declarative memory settings into mcu-gen template values."""
 
-        profile = system_design.get("memory_profile")
+        memory_keys = (
+            "memory_total_kib",
+            "memory_bank_size_kib",
+            "memory_interleaved_ratio",
+        )
         placement = system_design.get("memory_placement")
-        if profile is None and placement is None:
+        values = tuple(system_design.get(key) for key in memory_keys)
+        if all(value is None for value in values) and placement is None:
             return {}
-        if profile is None or placement is None:
+        if any(value is None for value in values) or placement is None:
             raise ComposerError(
-                "GR-HEEP memory configuration requires both 'memory_profile' and "
-                "'memory_placement'."
+                "GR-HEEP memory configuration requires memory_total_kib, "
+                "memory_bank_size_kib, memory_interleaved_ratio and memory_placement."
             )
-        if profile not in cls.MEMORY_PROFILES:
-            raise ComposerError(f"Unsupported GR-HEEP memory profile: {profile!r}.")
         if placement not in cls.MEMORY_PLACEMENTS:
             raise ComposerError(
                 f"Unsupported GR-HEEP memory placement: {placement!r}."
             )
-        if placement == "input_output_interleaved" and not str(profile).startswith(
-            "mixed_"
-        ):
+        try:
+            total_kib, bank_size_kib, interleaved_ratio = (
+                int(value) for value in values
+            )
+        except (TypeError, ValueError) as exc:
+            raise ComposerError("GR-HEEP memory parameters must be integers.") from exc
+        if total_kib <= 0 or bank_size_kib <= 0:
+            raise ComposerError("Memory total and bank size must be positive.")
+        if not 0 <= interleaved_ratio < 100:
             raise ComposerError(
-                "memory_placement='input_output_interleaved' requires a mixed "
-                "memory profile with interleaved banks."
+                "memory_interleaved_ratio must be between 0 and 99; at least one "
+                "continuous bank is required."
+            )
+        interleaved_numerator = total_kib * interleaved_ratio
+        if interleaved_numerator % 100:
+            raise ComposerError(
+                "memory_total_kib * memory_interleaved_ratio must be divisible by 100."
+            )
+        interleaved_kib = interleaved_numerator // 100
+        continuous_kib = total_kib - interleaved_kib
+        if continuous_kib % bank_size_kib or interleaved_kib % bank_size_kib:
+            raise ComposerError(
+                "Continuous and interleaved capacities must be divisible by "
+                "memory_bank_size_kib."
+            )
+        continuous_count = continuous_kib // bank_size_kib
+        interleaved_count = interleaved_kib // bank_size_kib
+        if continuous_count == 0:
+            raise ComposerError("At least one continuous memory bank is required.")
+        if interleaved_count != 0 and (
+            interleaved_count & (interleaved_count - 1)
+        ) != 0:
+            raise ComposerError(
+                "The number of interleaved memory banks must be a power of two."
+            )
+        if placement == "input_output_interleaved" and interleaved_count == 0:
+            raise ComposerError(
+                "memory_placement='input_output_interleaved' requires interleaved banks."
             )
         return {
-            **cls.MEMORY_PROFILES[profile],
+            "RAM_BANKS": f"[{bank_size_kib}] * {continuous_count}",
+            "INTERLEAVED_BANK_COUNT": str(interleaved_count),
+            "INTERLEAVED_BANK_SIZE": str(bank_size_kib if interleaved_count else 0),
+            "MEMORY_TOTAL_KIB": str(total_kib),
+            "MEMORY_CONTINUOUS_KIB": str(continuous_kib),
+            "MEMORY_INTERLEAVED_KIB": str(interleaved_kib),
             **cls.MEMORY_PLACEMENTS[placement],
         }
 

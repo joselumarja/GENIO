@@ -33,15 +33,23 @@
     "system": {
       "cpu": {
         "type": "choice",
-        "values": ["cv32e20", "cv32e40px"]
+        "values": ["cv32e20", "cv32e40p"]
       },
       "bus_type": {
         "type": "choice",
-        "values": ["NtoM"]
+        "values": ["onetoM", "NtoM"]
       },
-      "memory_profile": {
+      "memory_total_kib": {
         "type": "choice",
-        "values": ["mixed_4x32_il4x32", "mixed_2x64_il4x32"]
+        "values": [128, 256]
+      },
+      "memory_bank_size_kib": {
+        "type": "choice",
+        "values": [16, 32]
+      },
+      "memory_interleaved_ratio": {
+        "type": "choice",
+        "values": [0]
       },
       "memory_placement": {
         "type": "choice",
@@ -49,11 +57,11 @@
       },
       "dma_fifo_depth": {
         "type": "choice",
-        "values": [4, 8]
+        "values": [1, 2, 4, 8]
       },
       "accelerator_fifo_depth":{
         "type": "choice",
-        "values": [1, 2, 4, 8]
+        "values": [2, 4, 8]
       },
       "accelerator_fifo_almost_full_margin":{
         "type": "choice",
