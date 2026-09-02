@@ -23,6 +23,7 @@ from genio import SearchScenarioSpec
 from genio import SearchSpace
 from genio import SlotSpec
 from genio import StageChoice
+from genio.evaluation.image_functional import _BoundingBox
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,7 +152,7 @@ def test_python_image_functional_task_rejects_unknown_metrics(tmp_path) -> None:
         task.run(ExecutionContext(base_work_dir=tmp_path))
 
 
-def test_python_image_functional_task_executes_composed_pipeline(tmp_path) -> None:
+def test_python_image_functional_task_executes_composed_pipeline(tmp_path, monkeypatch) -> None:
     images_path = tmp_path / "images"
     references_path = tmp_path / "references"
     images_path.mkdir()
@@ -174,6 +175,15 @@ def test_python_image_functional_task_executes_composed_pipeline(tmp_path) -> No
         images_path=images_path,
         references_path=references_path,
         metrics=("mask_iou",),
+    )
+
+    def fail_on_unrequested_instance_metrics(*_args, **_kwargs):
+        raise AssertionError("instance metrics should not be computed")
+
+    monkeypatch.setattr(
+        PythonImageFunctionalTask,
+        "_instance_metrics",
+        classmethod(fail_on_unrequested_instance_metrics),
     )
 
     artifacts = task.run(ExecutionContext(base_work_dir=tmp_path))
@@ -250,6 +260,57 @@ def test_python_image_functional_task_computes_mask_and_instance_metrics(tmp_pat
         "mask_specificity": 1.0,
         "mean_box_iou": 1.0,
     }
+
+
+def test_binary_mask_preserves_multichannel_nonzero_semantics() -> None:
+    image = np.array(
+        [
+            [[0.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0]],
+            [[0.0, 0.0, np.nan, 0.0], [0.0, 0.0, 0.0, 2.0]],
+        ]
+    )
+
+    mask = PythonImageFunctionalTask._binary_mask(image)
+
+    assert np.array_equal(mask, image.any(axis=2))
+
+
+def test_bounding_boxes_preserve_boolean_mask_components() -> None:
+    storage = np.zeros((12, 12), dtype=bool)
+    mask = storage[::2, ::2]
+    mask[0, 0] = True
+    mask[1, 1] = True
+    mask[4:6, 3:5] = True
+
+    bool_boxes = PythonImageFunctionalTask._bounding_boxes(mask)
+    uint8_boxes = PythonImageFunctionalTask._bounding_boxes(mask.astype(np.uint8))
+
+    assert bool_boxes == uint8_boxes
+    assert bool_boxes == [
+        _BoundingBox(0, 0, 2, 2),
+        _BoundingBox(3, 4, 5, 6),
+    ]
+
+
+def test_match_boxes_preserves_threshold_ties_and_degenerate_boxes() -> None:
+    pred_boxes = [
+        _BoundingBox(0, 0, 2, 2),
+        _BoundingBox(10, 10, 10, 12),
+        _BoundingBox(20, 20, 22, 22),
+    ]
+    ref_boxes = [
+        _BoundingBox(0, 0, 4, 2),
+        _BoundingBox(-10, -10, -10, -8),
+        _BoundingBox(20, 20, 22, 22),
+    ]
+
+    matches = PythonImageFunctionalTask._match_boxes(pred_boxes, ref_boxes)
+
+    assert matches == [
+        (1, 1, 1.0),
+        (2, 2, 1.0),
+        (0, 0, 0.5),
+    ]
 
 
 def test_python_image_functional_task_rejects_zero_critical_metrics(tmp_path) -> None:

@@ -41,7 +41,7 @@
       },
       "memory_total_kib": {
         "type": "choice",
-        "values": [128, 256]
+        "values": [256]
       },
       "memory_bank_size_kib": {
         "type": "choice",
@@ -53,11 +53,11 @@
       },
       "memory_placement": {
         "type": "choice",
-        "values": ["shared_data", "separate_code_input_output"]
+        "values": ["shared_data"]
       },
       "dma_fifo_depth": {
         "type": "choice",
-        "values": [1, 2, 4, 8]
+        "values": [2, 4, 8]
       },
       "accelerator_fifo_depth":{
         "type": "choice",

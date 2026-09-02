@@ -54,9 +54,9 @@ VITIS_LIBRARIES_PATH = Path(
 HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
 OUTPUT_DIR = ROOT / "tmp/insect_xheep_random_search"
 
-MAX_EVALUATIONS = 20
-BATCH_SIZE = 4
-MAX_WORKERS = 4
+MAX_EVALUATIONS = 50
+BATCH_SIZE = 50
+MAX_WORKERS = 16
 SEED = 0
 
 # Keep a real-image-sized workload that fits comfortably in internal X-HEEP SRAM.
@@ -65,7 +65,8 @@ COLS = 192
 FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 30 * 60
 
-GR_HEEP_PATH = Path("/home/joselu/Integration/GEN-HEEP")
+#GR_HEEP_PATH = Path("/home/joselu/Integration/GEN-HEEP")
+GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
 XHEEP_TIMEOUT_SECONDS = 30 * 60
 
 

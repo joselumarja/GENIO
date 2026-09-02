@@ -252,6 +252,7 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
                 result = context.run_command(
                     command,
                     cwd=checkout_dir,
+                    env={"LC_ALL": "C"},
                     check=False,
                     timeout=command_timeout,
                 )
@@ -417,9 +418,12 @@ class XHeepVerilatorSimulationEvaluationStep(EvaluationStep):
         ("make", "verilator-run"),
     )
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    required_artifacts: Mapping[str, type[Artifact]] = MappingProxyType(
-        {"hls_image_pipeline_synthesis.rtl_hls_synthesis": HLSRTLArtifact}
+    required_artifacts: Mapping[str, type[Artifact]] = field(
+        default_factory=lambda: MappingProxyType(
+            {"hls_image_pipeline_synthesis.rtl_hls_synthesis": HLSRTLArtifact}
+        )
     )
+
     task_type: type[EvaluationTask] = XHeepVerilatorSimulationTask
 
     def checkpoint_signature(self) -> Mapping[str, Any]:

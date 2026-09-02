@@ -46,12 +46,8 @@ class PythonImageFunctionalTask(EvaluationTask):
     """Task that will execute a composed Python image-processing pipeline."""
 
     _SUPPORTED_IMAGE_SUFFIXES = frozenset({".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"})
-    _SUPPORTED_METRICS = frozenset(
+    _MASK_METRICS = frozenset(
         {
-            "count_error",
-            "instance_f1",
-            "instance_precision",
-            "instance_recall",
             "mask_accuracy",
             "mask_balanced_accuracy",
             "mask_f1",
@@ -61,9 +57,19 @@ class PythonImageFunctionalTask(EvaluationTask):
             "mask_precision",
             "mask_recall",
             "mask_specificity",
+        }
+    )
+    _INSTANCE_METRICS = frozenset(
+        {
+            "count_error",
+            "instance_f1",
+            "instance_precision",
+            "instance_recall",
             "mean_box_iou",
         }
     )
+    _MATCHED_INSTANCE_METRICS = _INSTANCE_METRICS - {"count_error"}
+    _SUPPORTED_METRICS = _MASK_METRICS | _INSTANCE_METRICS
     _CRITICAL_ZERO_METRICS = frozenset(
         {
             "instance_f1",
@@ -395,6 +401,9 @@ class PythonImageFunctionalTask(EvaluationTask):
         self,
         executions: tuple[_ImageFunctionalExecution, ...],
     ) -> dict[str, dict[str, float]]:
+        requested_metrics = frozenset(self.metrics)
+        requested_mask_metrics = requested_metrics & self._MASK_METRICS
+        requested_instance_metrics = requested_metrics & self._INSTANCE_METRICS
         per_sample: dict[str, dict[str, float]] = {}
         for execution in executions:
             if execution.output_path is None or execution.sample.reference_path is None:
@@ -406,8 +415,17 @@ class PythonImageFunctionalTask(EvaluationTask):
                 # Nearest-neighbor interpolation preserves discrete reference labels.
                 reference = self._resize_mask(reference, prediction.shape)
 
-            sample_metrics = self._mask_metrics(prediction, reference)
-            sample_metrics.update(self._instance_metrics(prediction, reference))
+            sample_metrics: dict[str, float] = {}
+            if requested_mask_metrics:
+                sample_metrics.update(self._mask_metrics(prediction, reference))
+            if requested_instance_metrics:
+                sample_metrics.update(
+                    self._instance_metrics(
+                        prediction,
+                        reference,
+                        requested_instance_metrics,
+                    )
+                )
             per_sample[execution.sample.id] = {
                 metric: sample_metrics[metric]
                 for metric in self.metrics
@@ -446,8 +464,13 @@ class PythonImageFunctionalTask(EvaluationTask):
         import numpy as np
 
         array = np.asarray(image)
+        if array.ndim == 3 and array.shape[2] > 0:
+            binary = np.array(array[..., 0], dtype=bool, copy=True)
+            for channel in range(1, array.shape[2]):
+                np.logical_or(binary, array[..., channel], out=binary)
+            return binary
         if array.ndim == 3:
-            array = array.any(axis=2)
+            return array.any(axis=2)
         return array > 0
 
     @staticmethod
@@ -468,10 +491,15 @@ class PythonImageFunctionalTask(EvaluationTask):
 
         pred = np.asarray(prediction, dtype=bool)
         ref = np.asarray(reference, dtype=bool)
-        tp = float(np.logical_and(pred, ref).sum())
-        fp = float(np.logical_and(pred, np.logical_not(ref)).sum())
-        fn = float(np.logical_and(np.logical_not(pred), ref).sum())
-        tn = float(np.logical_and(np.logical_not(pred), np.logical_not(ref)).sum())
+        pred, ref = np.broadcast_arrays(pred, ref)
+        tp_count = int(np.count_nonzero(np.logical_and(pred, ref)))
+        pred_count = int(np.count_nonzero(pred))
+        ref_count = int(np.count_nonzero(ref))
+
+        tp = float(tp_count)
+        fp = float(pred_count - tp_count)
+        fn = float(ref_count - tp_count)
+        tn = float(pred.size - pred_count - ref_count + tp_count)
 
         precision = PythonImageFunctionalTask._safe_div(tp, tp + fp)
         recall = PythonImageFunctionalTask._safe_div(tp, tp + fn)
@@ -489,9 +517,21 @@ class PythonImageFunctionalTask(EvaluationTask):
         }
 
     @classmethod
-    def _instance_metrics(cls, prediction: Any, reference: Any) -> dict[str, float]:
+    def _instance_metrics(
+        cls,
+        prediction: Any,
+        reference: Any,
+        requested_metrics: frozenset[str] | None = None,
+    ) -> dict[str, float]:
         pred_boxes = cls._bounding_boxes(prediction)
         ref_boxes = cls._bounding_boxes(reference)
+        count_error = float(abs(len(pred_boxes) - len(ref_boxes)))
+        if (
+            requested_metrics is not None
+            and requested_metrics.isdisjoint(cls._MATCHED_INSTANCE_METRICS)
+        ):
+            return {"count_error": count_error}
+
         matches = cls._match_boxes(pred_boxes, ref_boxes)
 
         tp = float(len(matches))
@@ -501,7 +541,7 @@ class PythonImageFunctionalTask(EvaluationTask):
         recall = cls._safe_div(tp, tp + fn)
 
         return {
-            "count_error": float(abs(len(pred_boxes) - len(ref_boxes))),
+            "count_error": count_error,
             "instance_f1": cls._safe_div(2.0 * precision * recall, precision + recall),
             "instance_precision": precision,
             "instance_recall": recall,
@@ -513,16 +553,16 @@ class PythonImageFunctionalTask(EvaluationTask):
         import cv2 as cv
         import numpy as np
 
-        binary = np.asarray(mask, dtype=np.uint8)
+        binary = np.asarray(mask)
+        if binary.dtype == np.bool_:
+            binary = binary.view(np.uint8)
+        else:
+            binary = np.asarray(binary, dtype=np.uint8)
         num_labels, _, stats, _ = cv.connectedComponentsWithStats(binary, connectivity=8)
-        boxes: list[_BoundingBox] = []
-        for label in range(1, num_labels):
-            x = int(stats[label, cv.CC_STAT_LEFT])
-            y = int(stats[label, cv.CC_STAT_TOP])
-            width = int(stats[label, cv.CC_STAT_WIDTH])
-            height = int(stats[label, cv.CC_STAT_HEIGHT])
-            boxes.append(_BoundingBox(x, y, x + width, y + height))
-        return boxes
+        return [
+            _BoundingBox(x, y, x + width, y + height)
+            for x, y, width, height in stats[1:num_labels, :4].tolist()
+        ]
 
     @classmethod
     def _match_boxes(
@@ -530,23 +570,50 @@ class PythonImageFunctionalTask(EvaluationTask):
         pred_boxes: list[_BoundingBox],
         ref_boxes: list[_BoundingBox],
     ) -> list[tuple[int, int, float]]:
+        import numpy as np
+
         # Greedily select highest-IoU one-to-one matches above the threshold.
-        candidates = sorted(
-            (
-                (pred_index, ref_index, cls._box_iou(pred_box, ref_box))
-                for pred_index, pred_box in enumerate(pred_boxes)
-                for ref_index, ref_box in enumerate(ref_boxes)
-            ),
-            key=lambda item: item[2],
-            reverse=True,
-        )
+        threshold = cls._BOX_IOU_THRESHOLD
+        if threshold > 0.0 and pred_boxes and ref_boxes:
+            pred = np.asarray(
+                [(box.x_min, box.y_min, box.x_max, box.y_max) for box in pred_boxes]
+            )
+            ref = np.asarray(
+                [(box.x_min, box.y_min, box.x_max, box.y_max) for box in ref_boxes]
+            )
+            candidate_mask = (
+                (pred[:, None, 0] < ref[None, :, 2])
+                & (ref[None, :, 0] < pred[:, None, 2])
+                & (pred[:, None, 1] < ref[None, :, 3])
+                & (ref[None, :, 1] < pred[:, None, 3])
+            )
+
+            # _safe_div defines the IoU of two zero-area boxes as 1.0.
+            pred_zero_area = (pred[:, 2] <= pred[:, 0]) | (pred[:, 3] <= pred[:, 1])
+            ref_zero_area = (ref[:, 2] <= ref[:, 0]) | (ref[:, 3] <= ref[:, 1])
+            candidate_mask |= pred_zero_area[:, None] & ref_zero_area[None, :]
+            candidate_pairs = zip(*np.nonzero(candidate_mask))
+        else:
+            candidate_pairs = (
+                (pred_index, ref_index)
+                for pred_index in range(len(pred_boxes))
+                for ref_index in range(len(ref_boxes))
+            )
+
+        candidates: list[tuple[int, int, float]] = []
+        for pred_index, ref_index in candidate_pairs:
+            pred_index = int(pred_index)
+            ref_index = int(ref_index)
+            iou = cls._box_iou(pred_boxes[pred_index], ref_boxes[ref_index])
+            if iou < threshold:
+                continue
+            candidates.append((pred_index, ref_index, iou))
+        candidates.sort(key=lambda item: item[2], reverse=True)
         matched_predictions: set[int] = set()
         matched_references: set[int] = set()
         matches: list[tuple[int, int, float]] = []
 
         for pred_index, ref_index, iou in candidates:
-            if iou < cls._BOX_IOU_THRESHOLD:
-                break
             if pred_index in matched_predictions or ref_index in matched_references:
                 continue
             matched_predictions.add(pred_index)
