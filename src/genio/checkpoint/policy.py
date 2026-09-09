@@ -1,3 +1,5 @@
+"""User-facing policy for periodic optimization checkpoints."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +8,22 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class CheckpointPolicy:
-    """Configure periodic checkpoint storage and optional session restoration."""
+    """Configure periodic checkpoint storage and optional restoration.
+
+    Attributes:
+        directory: Private directory containing snapshots, manifests, and locks.
+        every_batches: Save after each multiple of this completed-batch count.
+        keep_last: Maximum number of numbered snapshots retained.
+        save_on_completion: Persist a final snapshot after session finalization.
+        resume_from: Numbered snapshot or ``latest.json`` manifest to restore.
+        strict: Re-raise save errors when true; otherwise warn and continue. This
+            flag does not make loading or compatibility checks permissive.
+        compatibility_tag: Optional application-controlled value that must match
+            when the checkpoint is resumed.
+
+    Raises:
+        ValueError: If ``every_batches`` or ``keep_last`` is not positive.
+    """
 
     directory: Path
     every_batches: int = 1

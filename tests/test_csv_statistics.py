@@ -38,6 +38,7 @@ class StatisticsTask(EvaluationTask):
 class StatisticsStep(EvaluationStep):
     id = "score"
     task_type = StatisticsTask
+    produced_artifacts = {"metrics": ImageFunctionalMetricsArtifact}
 
     def create_task(self, individual, artifacts):
         return StatisticsTask(individual=individual, step_id=self.id)
@@ -48,7 +49,7 @@ class TwoProposalAlgorithm(SearchAlgorithm):
         self._asked = False
         self._evaluations = []
 
-    def ask(self, session):
+    def ask(self):
         if self._asked:
             return ()
         self._asked = True
@@ -76,8 +77,8 @@ class TwoProposalAlgorithm(SearchAlgorithm):
             )
         )
 
-    def tell(self, evaluations):
-        self._evaluations.extend(evaluations)
+    def tell(self, batch):
+        self._evaluations.extend(batch.evaluations)
 
     def should_stop(self):
         return bool(self._evaluations)
@@ -220,6 +221,7 @@ class CachedStatisticsTask(EvaluationTask):
 class CachedStatisticsStep(EvaluationStep):
     id = "cached"
     task_type = CachedStatisticsTask
+    produced_artifacts = {"metrics": ImageFunctionalMetricsArtifact}
 
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls

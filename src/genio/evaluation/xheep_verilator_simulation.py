@@ -12,18 +12,24 @@ from types import MappingProxyType
 from typing import Any
 
 from genio.artifacts import Artifact, HLSRTLArtifact, XHeepSimulationArtifact
-from genio.composer import Composer, GRHeepConfigurationComposer, GRHeepConfigurationPackage
+from genio.composer import GRHeepConfigurationComposer, GRHeepConfigurationPackage
 from genio.core.individual import Individual
 from genio.evaluation.step import EvaluationStep
 from genio.evaluation.task import EvaluationTask, ExecutionContext
 
 
 class XHeepVerilatorSimulationConfigurationError(ValueError):
-    """Raised when an X-HEEP Verilator simulation task is misconfigured."""
+    """Indicate invalid X-HEEP paths, commands, composer, or RTL inputs."""
 
 
 class XHeepVerilatorSimulationError(RuntimeError):
-    """Raised when an X-HEEP build or simulation command fails."""
+    """Report a nonzero exit from an X-HEEP build or simulation command.
+
+    Attributes:
+        command: Fully rendered command, including the conda wrapper.
+        returncode: Exit status returned by the command.
+        log_paths: Stdout and stderr logs accumulated through the failed command.
+    """
 
     def __init__(
         self,
@@ -41,15 +47,23 @@ class XHeepVerilatorSimulationError(RuntimeError):
 
 
 class XHeepVerilatorSimulationTimeoutError(TimeoutError):
-    """Raised when the X-HEEP tool flow exceeds its configured timeout."""
+    """Indicate that the aggregate X-HEEP command sequence exceeded its timeout."""
 
 
 class XHeepVerilatorSimulationResultError(RuntimeError):
-    """Raised when firmware reports an invalid or missing GENIO status."""
+    """Indicate a missing or failing firmware-level GENIO result status."""
 
 
 @dataclass(frozen=True, slots=True)
 class _XHeepRunResult:
+    """Collect the isolated checkout, command logs, and merged process output.
+
+    Attributes:
+        checkout_dir: Private GR-HEEP copy modified for this evaluation task.
+        log_paths: Ordered stdout/stderr log paths for executed commands.
+        output: Concatenated command streams parsed for firmware metrics.
+    """
+
     checkout_dir: Path
     log_paths: tuple[Path, ...]
     output: str
@@ -57,13 +71,37 @@ class _XHeepRunResult:
 
 @dataclass(frozen=True, slots=True)
 class XHeepVerilatorSimulationTask(EvaluationTask):
-    """Inject SAFA RTL into an isolated GR-HEEP tree and run Verilator."""
+    """Integrate SAFA-compatible HLS RTL into GR-HEEP and run Verilator.
 
-    composer: Composer | None = None
+    A :class:`GRHeepConfigurationComposer` renders the system configuration and
+    overlays the upstream HLS RTL, optional image data, firmware, and integration
+    files into an isolated copy of the GR-HEEP source tree. Each configured build
+    command is wrapped with ``conda run --no-capture-output`` and shares one total
+    task timeout.
+
+    Firmware communicates results through textual records:
+    ``GENIO_PERF:<region>:<cycles>``, ``GENIO_METRIC:<name>:<value>``, and the
+    mandatory ``GENIO_STATUS:<value>``. Verilator and program-finish cycle/status
+    messages are also recognized. A successful result requires zero GENIO status
+    and, when emitted, zero program status.
+
+    Attributes:
+        composer: GR-HEEP configuration and overlay composer.
+        hls_artifact: Upstream SAFA FIFO RTL artifact to integrate.
+        gr_heep_path: Source GR-HEEP checkout copied for the task.
+        input_image_path: Optional image embedded by the generated overlay.
+        application_name: Read-only firmware project name obtained from ``composer``.
+        conda_environment: Environment used for all build and simulation commands.
+        conda_tool: Conda-compatible executable.
+        make_tool: Replacement executable for commands beginning with ``make``.
+        commands: Ordered command templates executed in the isolated checkout.
+        metadata: Additional execution metadata and upstream artifact names.
+    """
+
+    composer: GRHeepConfigurationComposer | None = None
     hls_artifact: HLSRTLArtifact | None = None
     gr_heep_path: Path | None = None
     input_image_path: Path | None = None
-    application_name: str = "genio_target"
     conda_environment: str = "core-v-mini-mcu"
     conda_tool: str = "conda"
     make_tool: str = "make"
@@ -74,6 +112,12 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         ("make", "verilator-run"),
     )
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def application_name(self) -> str:
+        """Return the firmware project selected by the GR-HEEP composer."""
+
+        return self._require_gr_heep_composer().application_name
 
     def cache_inputs(self) -> Mapping[str, Any]:
         """Cache by pipeline, X-HEEP design and RTL artifact identity."""
@@ -101,7 +145,26 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         }
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
-        """Materialize the overlay, execute build commands and parse simulation logs."""
+        """Build and simulate an isolated GR-HEEP overlay for the candidate.
+
+        Args:
+            context: Execution services for resource resolution, copying, command
+                invocation, logging, and artifact persistence.
+
+        Returns:
+            A single :class:`XHeepSimulationArtifact` containing parsed metrics and
+            links to every command log.
+
+        Raises:
+            XHeepVerilatorSimulationConfigurationError: If inputs, commands, or
+                the GR-HEEP/composer contract are invalid.
+            TypeError: If composition returns an unexpected package type.
+            XHeepVerilatorSimulationTimeoutError: If the total command deadline
+                is exhausted.
+            XHeepVerilatorSimulationError: If any command exits unsuccessfully.
+            XHeepVerilatorSimulationResultError: If firmware omits GENIO status
+                or reports a failing GENIO/program status.
+        """
 
         gr_heep_path = self._validate_configuration(context)
         package = self._complete_package()
@@ -111,6 +174,15 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         return [self._simulation_artifact(context, run_result)]
 
     def _validate_configuration(self, context: ExecutionContext) -> Path:
+        """Validate the GR-HEEP, composer, RTL, image, and command contracts.
+
+        The RTL artifact must expose at least one existing Verilog file and declare
+        the ``safa_fifo`` interface required by the generated GR-HEEP wrapper.
+
+        Returns:
+            The resolved GR-HEEP source directory.
+        """
+
         if self.hls_artifact is None:
             raise XHeepVerilatorSimulationConfigurationError(
                 "XHeepVerilatorSimulationTask requires an HLS RTL artifact."
@@ -120,11 +192,6 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
                 "XHeepVerilatorSimulationTask requires a GRHeepConfigurationComposer."
             )
         self._require_gr_heep_composer()
-        if self.application_name != self._require_gr_heep_composer().application_name:
-            raise XHeepVerilatorSimulationConfigurationError(
-                "X-HEEP task application_name must match the GR-HEEP composer "
-                f"application_name ({self._require_gr_heep_composer().application_name!r})."
-            )
         if self.gr_heep_path is None:
             raise XHeepVerilatorSimulationConfigurationError(
                 "XHeepVerilatorSimulationTask requires gr_heep_path."
@@ -173,6 +240,15 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         return gr_heep_path
 
     def _complete_package(self) -> GRHeepConfigurationPackage:
+        """Compose system files and merge the HLS RTL/application overlay.
+
+        The returned package records the upstream RTL producer, artifact name, top
+        function, and Verilog filenames in metadata for traceability.
+
+        Raises:
+            TypeError: If the composer does not return the required GR-HEEP package.
+        """
+
         composer = self._require_gr_heep_composer()
         package = composer.compose(self.individual)
         if not isinstance(package, GRHeepConfigurationPackage):
@@ -201,6 +277,12 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         )
 
     def _copy_checkout(self, context: ExecutionContext, source: Path) -> Path:
+        """Create a fresh isolated GR-HEEP tree for destructive overlay writes.
+
+        Existing task-local copies are removed. The destination is rejected if it
+        resolves inside the source tree, preventing recursive self-copying.
+        """
+
         checkout_dir = context.task_dir(self, "xheep")
         try:
             checkout_dir.resolve().relative_to(source.resolve())
@@ -221,6 +303,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         package: GRHeepConfigurationPackage,
         checkout_dir: Path,
     ) -> None:
+        """Materialize generated files and persist their composition metadata."""
+
         package.materialize(checkout_dir)
         context.write_json(
             context.artifact_path(self, "xheep_overlay_metadata.json"),
@@ -232,6 +316,22 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         context: ExecutionContext,
         checkout_dir: Path,
     ) -> _XHeepRunResult:
+        """Execute the configured tool flow under one aggregate deadline.
+
+        Each command receives only the remaining task timeout. Its stdout and
+        stderr are persisted separately with an ordered command prefix. Run
+        metadata is written for command-level timeout, nonzero exit, and complete
+        success; an already exhausted deadline fails before the next command runs.
+
+        Returns:
+            The checkout, ordered log paths, and concatenated process output.
+
+        Raises:
+            XHeepVerilatorSimulationTimeoutError: If no deadline remains or a
+                command times out.
+            XHeepVerilatorSimulationError: If a command returns nonzero.
+        """
+
         log_paths: list[Path] = []
         outputs: list[str] = []
         timeout = self.execution_timeout_seconds()
@@ -293,6 +393,12 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         context: ExecutionContext,
         run_result: _XHeepRunResult,
     ) -> XHeepSimulationArtifact:
+        """Parse, persist, validate, and package the simulation measurements.
+
+        ``xheep_simulation.json`` is written before firmware statuses are validated,
+        preserving parsed metrics and log locations even for invalid results.
+        """
+
         values = self._parse_metrics(run_result.output)
         metadata_path = context.write_json(
             context.artifact_path(self, "xheep_simulation.json"),
@@ -314,6 +420,19 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
 
     @staticmethod
     def _parse_metrics(output: str) -> dict[str, float]:
+        """Parse the GENIO firmware and Verilator textual result protocols.
+
+        ``GENIO_PERF`` regions become ``<region>_cycles`` metrics and
+        ``GENIO_METRIC`` names are preserved. The last ``Program Finished`` value
+        wins, while status and total simulation cycles use their first regex match.
+
+        Args:
+            output: Concatenated stdout and stderr from all tool-flow commands.
+
+        Returns:
+            Parsed numeric values represented uniformly as floats.
+        """
+
         values: dict[str, float] = {}
         for region, cycles in re.findall(r"GENIO_PERF:([^:\s]+):(\d+)", output):
             values[f"{region}_cycles"] = float(cycles)
@@ -338,6 +457,13 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         values: Mapping[str, float],
         log_paths: tuple[Path, ...],
     ) -> None:
+        """Require successful firmware and optional program completion statuses.
+
+        Raises:
+            XHeepVerilatorSimulationResultError: If ``GENIO_STATUS`` is absent or
+                nonzero, or if an emitted program-finish status is nonzero.
+        """
+
         if "status" not in values:
             hint = f" See {log_paths[-1]}." if log_paths else ""
             raise XHeepVerilatorSimulationResultError(
@@ -355,6 +481,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             )
 
     def _require_gr_heep_composer(self) -> GRHeepConfigurationComposer:
+        """Return the composer after enforcing the GR-HEEP-specific protocol."""
+
         if not isinstance(self.composer, GRHeepConfigurationComposer):
             raise XHeepVerilatorSimulationConfigurationError(
                 "XHeepVerilatorSimulationTask requires GRHeepConfigurationComposer."
@@ -362,6 +490,12 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         return self.composer
 
     def _command(self, command: Sequence[str]) -> tuple[str, ...]:
+        """Render placeholders, substitute the make tool, and wrap with conda.
+
+        The ``{application_name}`` token is replaced in every argument. Only a
+        leading executable equal to ``make`` is replaced by :attr:`make_tool`.
+        """
+
         if not command:
             raise XHeepVerilatorSimulationConfigurationError("Empty X-HEEP command.")
         normalized = tuple(
@@ -391,6 +525,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
 
     @staticmethod
     def _sha256(path: Path) -> str:
+        """Hash an RTL file in bounded chunks for the task cache signature."""
+
         digest = hashlib.sha256()
         with path.open("rb") as file:
             for chunk in iter(lambda: file.read(1024 * 1024), b""):
@@ -400,14 +536,35 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
 
 @dataclass(frozen=True, slots=True)
 class XHeepVerilatorSimulationEvaluationStep(EvaluationStep):
-    """Create GR-HEEP/Verilator tasks from SAFA-compatible HLS RTL."""
+    """Configure GR-HEEP/Verilator tasks that consume synthesized HLS RTL.
+
+    The step requires the artifact key
+    ``hls_image_pipeline_synthesis.rtl_hls_synthesis`` and transfers that
+    :class:`HLSRTLArtifact` into every simulation task.
+
+    Attributes:
+        id: Evaluation graph identifier and artifact producer name.
+        depends_on: Step identifiers that must complete before simulation.
+        composer: GR-HEEP composer propagated to simulation tasks.
+        gr_heep_path: Source checkout used to create isolated task trees.
+        input_image_path: Optional image embedded in generated firmware data.
+        conda_environment: Environment used by all commands.
+        conda_tool: Conda-compatible executable.
+        make_tool: Executable substituted for leading ``make`` commands.
+        commands: Ordered build and simulation command templates.
+        metadata: Additional metadata propagated to tasks.
+        required_artifacts: Required upstream artifact key and type mapping.
+        task_type: Concrete simulation task class.
+    """
 
     id: str = "xheep_verilator_simulation"
+    produced_artifacts = {
+        "xheep_verilator_simulation": XHeepSimulationArtifact,
+    }
     depends_on: tuple[str, ...] = ()
-    composer: Composer | None = None
+    composer: GRHeepConfigurationComposer | None = None
     gr_heep_path: Path | None = None
     input_image_path: Path | None = None
-    application_name: str = "genio_target"
     conda_environment: str = "core-v-mini-mcu"
     conda_tool: str = "conda"
     make_tool: str = "make"
@@ -427,12 +584,22 @@ class XHeepVerilatorSimulationEvaluationStep(EvaluationStep):
     task_type: type[EvaluationTask] = XHeepVerilatorSimulationTask
 
     def checkpoint_signature(self) -> Mapping[str, Any]:
+        """Return all configuration that determines X-HEEP step reuse.
+
+        Returns:
+            A checkpoint mapping containing the base step signature, composer,
+            source/image paths, tool selection, command templates, and metadata.
+        """
+
         return {
             **EvaluationStep.checkpoint_signature(self),
-            "composer": self.composer,
+            "composer": (
+                self.composer.checkpoint_signature()
+                if isinstance(self.composer, GRHeepConfigurationComposer)
+                else None
+            ),
             "gr_heep_path": self.gr_heep_path,
             "input_image_path": self.input_image_path,
-            "application_name": self.application_name,
             "conda_environment": self.conda_environment,
             "conda_tool": self.conda_tool,
             "make_tool": self.make_tool,
@@ -445,6 +612,22 @@ class XHeepVerilatorSimulationEvaluationStep(EvaluationStep):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
+        """Create a simulation task from the required synthesized RTL artifact.
+
+        Args:
+            individual: Candidate whose system configuration will be simulated.
+            artifacts: Upstream artifacts keyed by fully qualified artifact name.
+
+        Returns:
+            A configured :class:`XHeepVerilatorSimulationTask` carrying the HLS RTL
+            artifact and the sorted upstream artifact names in metadata.
+
+        Raises:
+            KeyError: If the required HLS synthesis artifact is absent.
+            AssertionError: If the required artifact is not an
+                :class:`HLSRTLArtifact`.
+        """
+
         artifact = artifacts["hls_image_pipeline_synthesis.rtl_hls_synthesis"]
         assert isinstance(artifact, HLSRTLArtifact)
         return XHeepVerilatorSimulationTask(
@@ -454,7 +637,6 @@ class XHeepVerilatorSimulationEvaluationStep(EvaluationStep):
             hls_artifact=artifact,
             gr_heep_path=self.gr_heep_path,
             input_image_path=self.input_image_path,
-            application_name=self.application_name,
             conda_environment=self.conda_environment,
             conda_tool=self.conda_tool,
             make_tool=self.make_tool,

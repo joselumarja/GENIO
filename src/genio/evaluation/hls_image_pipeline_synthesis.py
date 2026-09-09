@@ -24,11 +24,17 @@ HLSConfigValue = str | Sequence[str]
 
 
 class HLSImagePipelineSynthesisConfigurationError(ValueError):
-    """Raised when an HLS image pipeline synthesis task is misconfigured."""
+    """Indicate invalid HLS task, package, target, or include configuration."""
 
 
 class HLSImagePipelineSynthesisError(RuntimeError):
-    """Raised when the external HLS synthesis command fails."""
+    """Report a nonzero exit from the external HLS synthesis command.
+
+    Attributes:
+        command: Fully rendered command passed to the execution context.
+        returncode: Exit status returned by the HLS process.
+        log_paths: Existing tool logs that may explain the failure.
+    """
 
     def __init__(
         self,
@@ -46,7 +52,13 @@ class HLSImagePipelineSynthesisError(RuntimeError):
 
 
 class HLSImagePipelineSynthesisTimeoutError(TimeoutError):
-    """Raised when the external HLS synthesis command exceeds its timeout."""
+    """Report that the external HLS synthesis command exceeded its timeout.
+
+    Attributes:
+        command: Fully rendered command passed to the execution context.
+        timeout_seconds: Configured execution limit in seconds.
+        log_paths: Tool logs discovered after the timed-out process ended.
+    """
 
     def __init__(
         self,
@@ -66,18 +78,54 @@ class HLSImagePipelineSynthesisTimeoutError(TimeoutError):
 
 @dataclass(frozen=True, slots=True)
 class _MaterializedHLSPackage:
+    """Hold the materialized HLS package and its composer metadata.
+
+    Attributes:
+        package_dir: Directory containing the generated source package.
+        package_metadata: Metadata emitted by the HLS composer.
+    """
+
     package_dir: Path
     package_metadata: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
 class _HLSRunResult:
+    """Identify the output of a successful external HLS run.
+
+    Attributes:
+        work_dir: Vitis work directory containing reports and generated RTL.
+    """
+
     work_dir: Path
 
 
 @dataclass(frozen=True, slots=True)
 class HLSImagePipelineSynthesisTask(EvaluationTask):
-    """Synthesizes an image-processing pipeline into HLS metrics and RTL."""
+    """Synthesize an image pipeline into Vitis HLS reports and RTL.
+
+    The composer must produce an :class:`HLSExecutionPackage`. Configuration is
+    assembled with deterministic precedence from a base file, task defaults, the
+    candidate's ``hls`` design domain, package metadata, explicit task fields,
+    and task overrides. Package and execution include flags are appended last.
+
+    The external tool is invoked with the ``v++ --compile --mode hls`` protocol.
+    For completed or timed-out invocations, standard streams, discovered tool
+    logs, command metadata, the final config, parsed synthesis metrics, and
+    generated Verilog/VHDL paths are persisted as available.
+
+    Attributes:
+        composer: Composer that generates the HLS source package.
+        hls_tool: Executable used for HLS compilation.
+        hls_config: Optional base ``.cfg`` file.
+        work_dir_name: Relative Vitis work directory inside the package.
+        top_function: Optional override for the synthesized top function.
+        clock_period: Optional clock period override in nanoseconds.
+        part: Optional FPGA part override.
+        config_defaults: Config keys applied before design and package values.
+        config_overrides: Config keys applied after explicit task fields.
+        metadata: Additional execution metadata and backend resources.
+    """
 
     composer: Composer | None = None
     hls_tool: str = "v++"
@@ -100,7 +148,25 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         }
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
-        """Synthesize the composed HLS pipeline and return report and RTL artifacts."""
+        """Compose, configure, and synthesize the candidate image pipeline.
+
+        Args:
+            context: Execution services for package materialization, commands,
+                resources, logs, and artifacts.
+
+        Returns:
+            The parsed :class:`HLSReportArtifact` followed by the
+            :class:`HLSRTLArtifact` containing generated HDL paths.
+
+        Raises:
+            HLSImagePipelineSynthesisConfigurationError: If task configuration,
+                required config keys, or backend include resources are invalid.
+            TypeError: If the composer returns a non-HLS package.
+            HLSImagePipelineSynthesisTimeoutError: If synthesis exceeds its limit.
+            HLSImagePipelineSynthesisError: If ``v++`` returns a nonzero status.
+            HLSReportParseError: If no usable synthesis XML report is found.
+            RuntimeError: If no top function or generated RTL can be identified.
+        """
 
         self._validate_configuration(context)
 
@@ -127,6 +193,16 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         package: _MaterializedHLSPackage,
         run_result: _HLSRunResult,
     ) -> HLSRTLArtifact:
+        """Discover generated HDL and describe it as an RTL artifact.
+
+        Verilog/SystemVerilog files are collected from ``hls/syn/verilog`` and
+        VHDL files from ``hls/syn/vhdl``. Interface and image-stream dimensions
+        from package metadata are propagated for downstream integration.
+
+        Raises:
+            RuntimeError: If the top function is unknown or no HDL files exist.
+        """
+
         top_function = self.top_function or package.package_metadata.get("top_function")
         if top_function is None:
             raise RuntimeError("Cannot identify the top function for generated HLS RTL.")
@@ -198,6 +274,12 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         package: _MaterializedHLSPackage,
         run_result: _HLSRunResult,
     ) -> HLSReportArtifact:
+        """Parse Vitis timing, latency, throughput, and resource metrics.
+
+        The complete parsed report is mirrored to ``hls_report_<origin>.json``;
+        source report paths remain attached to the returned artifact.
+        """
+
         top_function = self.top_function or package.package_metadata.get("top_function")
         parsed_report = parse_hls_synthesis_report(
             run_result.work_dir,
@@ -230,6 +312,24 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         context: ExecutionContext,
         hls_config_path: Path,
     ) -> _HLSRunResult:
+        """Run Vitis HLS while persisting handled command outcomes.
+
+        Both stdout/stderr logs and ``hls_run_metadata.json`` are written on
+        success, nonzero exit, and timeout. A timeout reports any standard output
+        captured by :class:`subprocess.TimeoutExpired` and discovered Vitis logs.
+
+        Args:
+            context: Execution context used to invoke and record the process.
+            hls_config_path: Final config file located in the package directory.
+
+        Returns:
+            The successful run's Vitis work directory.
+
+        Raises:
+            HLSImagePipelineSynthesisTimeoutError: If the process times out.
+            HLSImagePipelineSynthesisError: If the process exits unsuccessfully.
+        """
+
         package_dir = context.package_dir(self)
         work_dir = context.ensure_dir(package_dir / self.work_dir_name)
         command = (
@@ -242,7 +342,7 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
             "--work_dir",
             self.work_dir_name,
         )
-        # Keep control of failures so logs and command metadata are always persisted.
+        # Handle process exits and timeouts here so their diagnostics are persisted.
         timeout_seconds = self.execution_timeout_seconds()
         try:
             result = context.run_command(
@@ -332,6 +432,22 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         context: ExecutionContext,
         package: _MaterializedHLSPackage,
     ) -> Path:
+        """Merge all HLS config sources and persist the effective config.
+
+        Precedence is base config, defaults, candidate ``hls`` design, package
+        top/source metadata, explicit part and clock fields, then overrides.
+        Backend include flags are appended after those sources. The resulting
+        ``hls_config.cfg`` must define ``[hls] syn.file`` and ``syn.top`` and is
+        accompanied by applied-value metadata and a SHA-256 content digest.
+
+        Returns:
+            Path to the effective config in the materialized package directory.
+
+        Raises:
+            HLSImagePipelineSynthesisConfigurationError: If required keys or
+                backend include resources are missing or invalid.
+        """
+
         package_dir = package.package_dir
         package_config_path = package_dir / "hls_config.cfg"
 
@@ -427,6 +543,14 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         config: str,
         applied_values: dict[str, Any],
     ) -> str:
+        """Append package and execution-host include paths as C flags.
+
+        Packages declaring ``vitis_libraries_path`` as a required backend resource
+        resolve the Vitis Vision ``vision/L1/include`` directory from execution
+        metadata. Additional paths use ``metadata['hls_include_paths']`` and are
+        validated as execution-host directories.
+        """
+
         include_flags = [
             self._include_cflag(include_dir)
             for include_dir in self._package_include_dirs(package_dir, package_metadata)
@@ -477,6 +601,13 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
 
     @staticmethod
     def _execution_include_paths(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+        """Normalize and deduplicate execution-level HLS include path values.
+
+        Raises:
+            HLSImagePipelineSynthesisConfigurationError: If the metadata value is
+                not a path or sequence of nonempty paths.
+        """
+
         values = metadata.get("hls_include_paths", ())
         if isinstance(values, (str, Path)):
             values = (values,)
@@ -519,6 +650,12 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         flags: list[str],
         applied_values: dict[str, Any],
     ) -> str:
+        """Append unique include flags to the last effective ``hls.syn.cflags``.
+
+        Existing flags are shell-split for comparison, while newly rendered flag
+        strings retain their original quoting in the generated config.
+        """
+
         if not flags:
             return config
         existing_values = cls._config_values(config, "hls.syn.cflags")
@@ -552,6 +689,13 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         return f"-I{value}"
 
     def _compose_and_materialize(self, context: ExecutionContext) -> _MaterializedHLSPackage:
+        """Compose HLS sources and persist composition metadata.
+
+        Raises:
+            TypeError: If the configured composer does not return an
+                :class:`HLSExecutionPackage`.
+        """
+
         assert self.composer is not None
         package = self.composer.compose(self.individual)
         if not isinstance(package, HLSExecutionPackage):
@@ -580,6 +724,8 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         values: Mapping[str, Any],
         applied_values: dict[str, Any],
     ) -> str:
+        """Apply scalar or repeated config values and record their rendered form."""
+
         for key, value in values.items():
             if isinstance(value, Sequence) and not isinstance(
                 value,
@@ -605,6 +751,14 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         key: str,
         values: Sequence[str],
     ) -> str:
+        """Replace all occurrences of a config key or insert it in its section.
+
+        Qualified keys use ``section.option`` syntax. Existing option positions
+        are reused in order, excess occurrences are removed, and excess values
+        are inserted after the last occurrence. The rendered result always ends
+        in exactly one newline.
+        """
+
         section_name, option = cls._split_config_key(key)
         lines = content.splitlines()
         matching_indexes = cls._config_key_indexes(lines, section_name, option)
@@ -641,6 +795,8 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
 
     @staticmethod
     def _split_config_key(key: str) -> tuple[str | None, str]:
+        """Split an optional ``section.option`` key and reject empty components."""
+
         if "." not in key:
             if not key:
                 raise HLSImagePipelineSynthesisConfigurationError(
@@ -752,6 +908,13 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
         return line.split("=", 1)[1].strip()
 
     def _validate_configuration(self, context: ExecutionContext) -> None:
+        """Validate tools, paths, timeout, design shape, and config prerequisites.
+
+        Required generated-config keys are checked before composition only when
+        the task has a known config source. A package-provided ``hls_config.cfg``
+        is intentionally validated later after materialization.
+        """
+
         if self.composer is None:
             raise HLSImagePipelineSynthesisConfigurationError(
                 "HLSImagePipelineSynthesisTask requires a composer before synthesis can run."
@@ -831,9 +994,29 @@ class HLSImagePipelineSynthesisTask(EvaluationTask):
 
 @dataclass(frozen=True, slots=True)
 class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
-    """Creates synthesis tasks for HLS image-processing pipelines."""
+    """Configure creation of Vitis HLS image-pipeline synthesis tasks.
+
+    Attributes:
+        id: Evaluation graph identifier and artifact producer prefix.
+        depends_on: Step identifiers that must complete before synthesis.
+        composer: HLS package composer propagated to each task.
+        hls_tool: Vitis HLS command executable.
+        hls_config: Optional base config path.
+        work_dir_name: Relative Vitis work directory name.
+        top_function: Optional top-function override.
+        clock_period: Optional target period in nanoseconds.
+        part: Optional FPGA part override.
+        config_defaults: Low-precedence generated config values.
+        config_overrides: High-precedence generated config values.
+        metadata: Additional task and backend metadata.
+        task_type: Concrete synthesis task class.
+    """
 
     id: str = "hls_image_pipeline_synthesis"
+    produced_artifacts = {
+        "report_hls_synthesis": HLSReportArtifact,
+        "rtl_hls_synthesis": HLSRTLArtifact,
+    }
     depends_on: tuple[str, ...] = ()
     composer: Composer | None = None
     hls_tool: str = "v++"
@@ -848,7 +1031,7 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
     task_type: type[EvaluationTask] = HLSImagePipelineSynthesisTask
 
     def checkpoint_signature(self) -> Mapping[str, Any]:
-        """Return HLS tool, target, composer and execution configuration."""
+        """Return HLS tool, target, composer, and execution checkpoint inputs."""
 
         return {
             **EvaluationStep.checkpoint_signature(self),
@@ -869,7 +1052,15 @@ class HLSImagePipelineSynthesisEvaluationStep(EvaluationStep):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
-        """Create an HLS image pipeline synthesis task for an individual."""
+        """Create an HLS synthesis task and record upstream artifact names.
+
+        Args:
+            individual: Candidate whose image pipeline will be synthesized.
+            artifacts: Artifacts available from dependency steps.
+
+        Returns:
+            A configured :class:`HLSImagePipelineSynthesisTask`.
+        """
 
         return HLSImagePipelineSynthesisTask(
             individual=individual,

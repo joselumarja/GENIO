@@ -54,10 +54,13 @@ def make_artifact(tmp_path: Path) -> HLSRTLArtifact:
     )
 
 
-def make_composer() -> GRHeepConfigurationComposer:
+def make_composer(
+    application_name: str = "genio_trans_mem_mem",
+) -> GRHeepConfigurationComposer:
     return GRHeepConfigurationComposer(
         ROOT / "search_space/stages/definitions",
         templates_path=ROOT / "gr_heep_templates",
+        application_name=application_name,
     )
 
 
@@ -89,6 +92,7 @@ def test_xheep_workflow_orders_hls_before_simulation() -> None:
 
 
 def test_xheep_commands_run_in_core_v_mini_mcu_conda_environment(tmp_path) -> None:
+    composer = make_composer("genio_trans_flash_mem")
     task = XHeepVerilatorSimulationTask(
         individual=Individual.from_slots(
             id="command",
@@ -96,7 +100,7 @@ def test_xheep_commands_run_in_core_v_mini_mcu_conda_environment(tmp_path) -> No
             design={"system": {}},
             slots=[StageChoice(slot=0, stage="nop")],
         ),
-        composer=make_composer(),
+        composer=composer,
         hls_artifact=make_artifact(tmp_path),
     )
 
@@ -110,6 +114,13 @@ def test_xheep_commands_run_in_core_v_mini_mcu_conda_environment(tmp_path) -> No
         "mcu-gen",
     )
     assert task.commands[-1] == ("make", "verilator-run")
+    assert task.application_name == "genio_trans_flash_mem"
+    assert task._command(("make", "app", "PROJECT={application_name}"))[-3:] == (
+        "make",
+        "app",
+        "PROJECT=genio_trans_flash_mem",
+    )
+    assert "application_name" not in task.__dataclass_fields__
 
 
 def test_xheep_checkout_preserves_external_software_build_symlink(tmp_path) -> None:
@@ -196,9 +207,10 @@ def test_xheep_step_propagates_input_image_path(tmp_path) -> None:
     image_path = tmp_path / "sample.png"
     image_path.write_bytes(b"sample")
     artifact = make_artifact(tmp_path)
+    composer = make_composer("genio_trans_flash_mem")
     step = XHeepVerilatorSimulationEvaluationStep(
         depends_on=("hls_image_pipeline_synthesis",),
-        composer=make_composer(),
+        composer=composer,
         input_image_path=image_path,
     )
     individual = Individual.from_slots(
@@ -214,6 +226,9 @@ def test_xheep_step_propagates_input_image_path(tmp_path) -> None:
     )
 
     assert task.input_image_path == image_path
+    assert task.application_name == composer.application_name
+    assert "application_name" not in step.__dataclass_fields__
+    assert "application_name" not in step.checkpoint_signature()
     assert step.checkpoint_signature()["input_image_path"] == image_path
 
 

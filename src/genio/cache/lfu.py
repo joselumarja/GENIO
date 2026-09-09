@@ -1,3 +1,5 @@
+"""Thread-safe LFU artifact cache with per-step capacities and telemetry."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -21,7 +23,12 @@ class _NamespaceStats:
 
 
 class LFUArtifactCache(ArtifactCache):
-    """Bound artifact entries by namespace using LFU with an LRU tie-breaker."""
+    """Bound artifact entries by namespace using LFU with an LRU tie-breaker.
+
+    Each workflow step normally forms one namespace. Eviction first chooses the
+    entry with the smallest logical read count, then the oldest access sequence,
+    and finally the lexicographically smallest key for deterministic ties.
+    """
 
     def __init__(
         self,
@@ -29,6 +36,16 @@ class LFUArtifactCache(ArtifactCache):
         *,
         default_capacity: int = 0,
     ) -> None:
+        """Configure per-namespace entry limits.
+
+        Args:
+            capacities: Explicit capacities keyed by namespace.
+            default_capacity: Limit used for namespaces not listed explicitly. A
+                value of zero disables caching for those namespaces.
+
+        Raises:
+            ValueError: If any capacity is negative.
+        """
         if default_capacity < 0:
             raise ValueError("default_capacity cannot be negative.")
         normalized_capacities = dict(capacities or {})
@@ -76,7 +93,12 @@ class LFUArtifactCache(ArtifactCache):
         source_individual_id: str,
         initial_reads: int = 1,
     ) -> CacheEntry:
-        """Insert artifacts and evict the least-frequent, least-recent entry."""
+        """Insert artifacts and evict the least-frequent, least-recent entry.
+
+        Artifacts are deep-copied when first stored. If ``key`` already exists,
+        the original entry is returned unchanged. ``initial_reads`` accounts for
+        all equivalent requests coalesced into the representative execution.
+        """
 
         if initial_reads <= 0:
             raise ValueError("initial_reads must be positive.")
@@ -133,7 +155,12 @@ class LFUArtifactCache(ArtifactCache):
             self._access_sequence = 0
 
     def snapshot(self) -> dict[str, Any]:
-        """Return aggregate and per-namespace LFU telemetry."""
+        """Return aggregate and per-namespace LFU telemetry.
+
+        ``hits`` count reads served by entries that already existed, while
+        ``coalesced`` counts same-wave executions avoided before a new entry was
+        stored. ``executions_avoided`` combines both values.
+        """
 
         with self._lock:
             namespaces = sorted(
@@ -143,7 +170,7 @@ class LFUArtifactCache(ArtifactCache):
                 namespace: self._namespace_snapshot(namespace)
                 for namespace in namespaces
             }
-            totals = {
+            totals: dict[str, int | float] = {
                 name: sum(int(values[name]) for values in per_namespace.values())
                 for name in (
                     "entries",

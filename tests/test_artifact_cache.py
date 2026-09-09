@@ -58,6 +58,7 @@ class CacheableEmptyTask(EvaluationTask):
 class CacheableMetricStep(EvaluationStep):
     id = "cacheable"
     task_type = CacheableMetricTask
+    produced_artifacts = {"metrics": ImageFunctionalMetricsArtifact}
 
     def __init__(self, counter: CallCounter, *, fail_first: bool = False) -> None:
         self.counter = counter

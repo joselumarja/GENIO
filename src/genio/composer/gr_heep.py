@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 from genio.artifacts import HLSRTLArtifact
 from genio.composer.base import Composer, ComposerError, ExecutionPackage
@@ -121,6 +121,7 @@ class GRHeepConfigurationComposer(Composer):
         "OUTPUT_WORDS": "0",
         "DMA_CHANNEL": "0",
         "TIMEOUT_CYCLES": "0",
+        "FLASH_OUTPUT_OFFSET": "0x00800000",
         "IMAGE_WORDS": "[0 ... GENIO_INPUT_WORDS - 1] = 0x6090c030u,",
     }
 
@@ -129,7 +130,7 @@ class GRHeepConfigurationComposer(Composer):
         stages_definitions_path: str | Path,
         *,
         templates_path: str | Path,
-        application_name: str = "genio_target",
+        application_name: str,
         configuration_defaults: Mapping[str, Any] | None = None,
         application_defaults: Mapping[str, Any] | None = None,
         parameter_bindings: Mapping[str, str] | None = None,
@@ -563,8 +564,9 @@ class GRHeepConfigurationComposer(Composer):
                 f"Unsupported GR-HEEP memory placement: {placement!r}."
             )
         try:
+            integer_values = cast(tuple[Any, Any, Any], values)
             total_kib, bank_size_kib, interleaved_ratio = (
-                int(value) for value in values
+                int(value) for value in integer_values
             )
         except (TypeError, ValueError) as exc:
             raise ComposerError("GR-HEEP memory parameters must be integers.") from exc

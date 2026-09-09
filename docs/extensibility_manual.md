@@ -6,14 +6,15 @@ GENIO separa tres ideas principales:
 
 - El framework define contratos estables.
 - Las extensiones concretas implementan logica de dominio.
-- Los algoritmos de busqueda consumen metricas normalizadas, no artefactos ni detalles de ejecucion.
+- Los algoritmos de busqueda consumen `EvaluatedBatch`, no artefactos ni detalles de ejecucion.
 
 ## Vista General
 
 El flujo extensible es:
 
 ```text
-SearchAlgorithm.ask(session)
+OptimizationSession configura SearchAlgorithm con SearchContext
+SearchAlgorithm.ask()
         -> Individual[]
 EvaluationWorkflow
         -> EvaluationStep.create_task(...)
@@ -21,14 +22,16 @@ EvaluationWorkflow
         -> Artifact[] / MetricArtifact[]
 EvaluationExecutor
         -> Result.metrics
-SearchAlgorithm.tell(evaluations)
-        -> usa Objective u ObjectiveSet si lo necesita
+ObjectiveRuntime interno
+        -> EvaluatedBatch
+SearchAlgorithm.tell(batch)
 ```
 
 Las extensiones principales se apoyan en estas clases:
 
 ```text
 SearchAlgorithm
+SearchContext
 EvaluationStep
 EvaluationTask
 Artifact
@@ -37,6 +40,8 @@ Backend
 Composer
 Objective
 ObjectiveSet
+Normalizer
+Scalarizer
 StatisticsCollector
 ```
 
@@ -51,7 +56,10 @@ GENIO espera que cada extension respete estas reglas:
 - `Artifact` transporta salidas entre steps.
 - `MetricArtifact` expone metricas numericas que se agregan en `Result.metrics`.
 - `Result` no contiene artefactos; solo estado, metricas y error.
-- `Objective` interpreta metricas y direccion de optimizacion.
+- `ObjectiveSet` configura en la sesion la extraccion, normalizacion y scalarizacion.
+- `ObjectiveRuntime` mantiene estado aislado de una sesion y entrega `EvaluatedBatch`.
+- Cada algoritmo decide la semantica de `best_individuals()`.
+- El analisis historico pertenece a las estadisticas y herramientas posteriores, no a `ObjectiveSet`.
 - `Composer` ayuda a traducir individuos a representaciones de dominio.
 - `StatisticsCollector` observa eventos de sesion sin modificar el flujo.
 
@@ -67,10 +75,13 @@ Contrato:
 
 ```python
 class SearchAlgorithm(ABC):
-    def ask(self, session: OptimizationSession) -> Sequence[Individual]:
+    def configure(self, context: SearchContext) -> None:
         ...
 
-    def tell(self, evaluations: Sequence[Evaluation]) -> None:
+    def ask(self) -> Sequence[Individual]:
+        ...
+
+    def tell(self, batch: EvaluatedBatch) -> None:
         ...
 
     def should_stop(self) -> bool:
@@ -82,17 +93,36 @@ class SearchAlgorithm(ABC):
 
 Responsabilidades:
 
-- Proponer individuos desde `session.search_space`.
-- Recibir evaluaciones completas en `tell(...)`.
+- Validar en `configure(...)` el esquema y las transformaciones requeridas.
+- Proponer individuos desde `self.context.search_space`.
+- Recibir resultados objetivos completos en `tell(batch)`.
 - Mantener estado interno.
 - Decidir cuando detenerse.
-- Devolver mejores individuos si tiene criterio para ello.
+- Devolver los mejores individuos segun su propio criterio.
 
 No debe:
 
 - Ejecutar tasks directamente.
 - Leer artefactos intermedios del backend.
 - Conocer detalles de Vitis, OpenCV, datasets o plantillas.
+
+### `SearchContext`
+
+La sesion construye y fija este contexto inmutable antes de iniciar el primer batch:
+
+```python
+SearchContext(
+    search_space: SearchSpace,
+    objective_schema: ObjectiveSchema | None = None,
+    has_normalizer: bool = False,
+    has_scalarizer: bool = False,
+    normalization_scope: str | None = None,
+)
+```
+
+No expone el `ObjectiveSet` ejecutable, backend, workflow ni sesion completa.
+`configure()` es idempotente si recibe un contexto igual y rechaza cambiarlo despues.
+Una subclase debe validar sus requisitos antes de llamar a `super().configure(context)`.
 
 ### Algoritmos Sin Objetivo
 
@@ -107,76 +137,95 @@ class FirstNAlgorithm(SearchAlgorithm):
         self.next_index = 0
         self.evaluations = []
 
-    def ask(self, session):
+    def ask(self):
         if self.next_index >= self.limit:
             return []
-        individual = session.search_space.from_index(self.next_index)
+        individual = self.context.search_space.from_index(self.next_index)
         self.next_index += 1
         return [individual]
 
-    def tell(self, evaluations):
-        self.evaluations.extend(evaluations)
+    def tell(self, batch):
+        self.evaluations.extend(batch.evaluations)
 
     def should_stop(self):
         return self.next_index >= self.limit
 ```
 
-### Algoritmos Monoobjetivo
+### Algoritmos Con Score
 
-Los algoritmos monoobjetivo pueden recibir un `Objective` en su constructor y usar `objective.score(evaluation)`.
+Los algoritmos escalares no extraen objetivos por su cuenta. Declaran que requieren
+un scalarizer y consumen `ObjectiveValues.aggregate_score` ya calculado:
 
 ```python
-from genio import SearchAlgorithm, Objective
+from genio import SearchAlgorithm
 
 class BestScoreAlgorithm(SearchAlgorithm):
-    def __init__(self, objective: Objective, limit: int) -> None:
-        self.objective = objective
+    def __init__(self, limit: int) -> None:
         self.limit = limit
         self.next_index = 0
-        self.evaluations = []
+        self.scored = []
 
-    def ask(self, session):
+    def configure(self, context):
+        if not context.has_scalarizer:
+            raise ValueError("BestScoreAlgorithm requires a scalarizer")
+        super().configure(context)
+
+    def ask(self):
         if self.next_index >= self.limit:
             return []
-        individual = session.search_space.from_index(self.next_index)
+        individual = self.context.search_space.from_index(self.next_index)
         self.next_index += 1
         return [individual]
 
-    def tell(self, evaluations):
-        self.evaluations.extend(evaluations)
+    def tell(self, batch):
+        for item in batch.valid_items:
+            score = item.objective_values.aggregate_score
+            if score is None:
+                raise ValueError("Missing aggregate score")
+            self.scored.append((score, item.individual))
 
     def should_stop(self):
         return self.next_index >= self.limit
 
     def best_individuals(self):
-        if not self.evaluations:
+        if not self.scored:
             return ()
-        best = max(self.evaluations, key=self.objective.score)
-        return (best.individual,)
+        return (max(self.scored, key=lambda entry: entry[0])[1],)
 ```
 
 ### Algoritmos Multiobjetivo
 
-Los algoritmos multiobjetivo pueden recibir un `ObjectiveSet` y usar `values(...)`, `scores(...)` o `dominates(...)`.
+Los algoritmos multiobjetivo validan `context.objective_schema` y consumen matrices
+orientadas de `EvaluatedBatch`. Por ejemplo, un adaptador que usa convencion de
+minimizacion puede obtener:
 
 ```python
-from genio import ObjectiveSet, dominates
+class ExternalMultiObjectiveAdapter(SearchAlgorithm):
+    def configure(self, context):
+        if context.objective_schema is None or len(context.objective_schema) < 2:
+            raise ValueError("At least two objectives are required")
+        super().configure(context)
 
-class ParetoArchive:
-    def __init__(self, objectives: ObjectiveSet) -> None:
-        self.objectives = objectives
-        self.front = []
-
-    def add(self, evaluation):
-        if any(dominates(existing, evaluation, self.objectives) for existing in self.front):
-            return
-        self.front = [
-            existing
-            for existing in self.front
-            if not dominates(evaluation, existing, self.objectives)
-        ]
-        self.front.append(evaluation)
+    def tell(self, batch):
+        valid_items = batch.valid_items
+        objective_rows = batch.minimization_matrix()
+        self.external_optimizer.tell(
+            individuals=[item.individual for item in valid_items],
+            objectives=objective_rows,
+        )
 ```
+
+La alineacion de fallos debe ser explicita si una libreria externa exige una fila por
+propuesta. No se deben interpretar placeholders numericos como objetivos validos.
+
+### Frontera De Fallos
+
+- Un fallo esperado de una task se convierte en `Result.failed`; los demas individuos del batch continuan.
+- El runtime lo entrega como `EVALUATION_FAILED`, sin usar metricas parciales como objetivos.
+- Un `Result.success` con objetivos ausentes, booleanos, no numericos o no finitos se entrega como `INVALID_OBJECTIVES`.
+- Cada algoritmo decide como tratar items invalidos. Genetic les asigna fitness cero y NSGA-II los marca como no factibles.
+- Un error de contrato, normalizacion, scalarizacion, `tell()` o hook despues de `ask()` deja la sesion fallida y no reanudable. Las llamadas posteriores a `run()` o `save_checkpoint()` fallan claramente.
+- Un `ask()` vacio es valido solo si el algoritmo confirma `should_stop()`; vacio sin parada es un error de contrato.
 
 ## 2. Extender Objetivos De Optimizacion
 
@@ -188,8 +237,10 @@ from genio import (
     MetricObjective,
     ObjectiveSet,
     ObjectiveError,
+    MinMaxNormalizer,
+    NormalizationScope,
     OptimizationDirection,
-    dominates,
+    WeightedMeanScalarizer,
 )
 ```
 
@@ -216,10 +267,17 @@ class Objective(ABC):
     def direction(self) -> OptimizationDirection:
         ...
 
+    @property
+    def normalization_bounds(self) -> tuple[float, float] | None:
+        return None
+
     def value(self, evaluation: Evaluation) -> float:
         ...
 
     def score(self, evaluation: Evaluation) -> float:
+        ...
+
+    def checkpoint_signature(self) -> Mapping[str, Any]:
         ...
 ```
 
@@ -234,7 +292,7 @@ from genio import MetricObjective, OptimizationDirection
 
 objective = MetricObjective(
     metric="functional.f1",
-    optimization_direction=OptimizationDirection.MAXIMIZE,
+    direction=OptimizationDirection.MAXIMIZE,
 )
 ```
 
@@ -243,10 +301,27 @@ Ejemplo de minimizacion:
 ```python
 latency = MetricObjective(
     metric="hls.latency",
-    optimization_direction=OptimizationDirection.MINIMIZE,
-    id="latency",
+    direction=OptimizationDirection.MINIMIZE,
+    name="latency",
+    normalization_bounds=(0.0, 1_000_000.0),
 )
 ```
+
+La firma final es:
+
+```python
+MetricObjective(
+    metric,
+    direction,
+    *,
+    name=None,
+    normalization_bounds=None,
+)
+```
+
+`direction` acepta el enum o `"maximize"`/`"minimize"`. `name` usa `metric` por
+defecto. Los bounds solo configuran normalizacion y deben ser finitos con minimo menor
+que maximo.
 
 ### Crear Un Objetivo Personalizado
 
@@ -269,6 +344,10 @@ class WeightedQualityObjective(Objective):
     def direction(self):
         return OptimizationDirection.MAXIMIZE
 
+    @property
+    def normalization_bounds(self):
+        return (-1_000.0, 1.0)
+
     def value(self, evaluation):
         metrics = evaluation.result.metrics
         try:
@@ -277,11 +356,22 @@ class WeightedQualityObjective(Objective):
         except KeyError as exc:
             raise ObjectiveError("Missing metric for weighted quality") from exc
         return f1 - 0.001 * latency
+
+    def checkpoint_signature(self):
+        return {
+            "type": f"{type(self).__module__}.{type(self).__qualname__}",
+            "f1_metric": self.f1_metric,
+            "latency_metric": self.latency_metric,
+            "normalization_bounds": list(self.normalization_bounds),
+        }
 ```
+
+La firma es obligatoria para una extension: debe incluir todos los campos que cambian
+la extraccion o transformacion. No basta el nombre de la clase.
 
 ### `ObjectiveSet`
 
-Agrupa varios objetivos para algoritmos multiobjetivo.
+Agrupa la configuracion de uno o varios objetivos para la sesion.
 
 ```python
 from genio import ObjectiveSet, MetricObjective, OptimizationDirection
@@ -289,18 +379,116 @@ from genio import ObjectiveSet, MetricObjective, OptimizationDirection
 objectives = ObjectiveSet((
     MetricObjective(
         metric="functional.f1",
-        optimization_direction=OptimizationDirection.MAXIMIZE,
+        direction=OptimizationDirection.MAXIMIZE,
     ),
     MetricObjective(
         metric="hls.latency",
-        optimization_direction=OptimizationDirection.MINIMIZE,
+        direction=OptimizationDirection.MINIMIZE,
     ),
     MetricObjective(
         metric="hls.lut",
-        optimization_direction=OptimizationDirection.MINIMIZE,
+        direction=OptimizationDirection.MINIMIZE,
     ),
 ))
 ```
+
+Los defaults son deliberadamente neutros:
+
+```python
+ObjectiveSet(
+    objectives: Sequence[Objective],
+    normalizer: Normalizer | None = None,
+    scalarizer: Scalarizer | None = None,
+)
+```
+
+Sin normalizer no existen vectores normalizados; sin scalarizer no existe
+`aggregate_score`. `ObjectiveSet` valida nombres, orden, esquema y estrategias, pero no
+guarda historia, no calcula un Pareto historico y no decide `best_individuals()`.
+
+### Normalizacion Min-Max
+
+```python
+MinMaxNormalizer(scope=NormalizationScope.BATCH)
+MinMaxNormalizer(scope=NormalizationScope.CUMULATIVE)
+MinMaxNormalizer(scope=NormalizationScope.FIXED)
+```
+
+| Scope | Uso | Comparabilidad |
+| --- | --- | --- |
+| `BATCH` | Ajusta columnas sin bounds al batch valido actual. | Solo dentro del mismo batch. |
+| `CUMULATIVE` | Amplia minimos y maximos con cada batch. | Los scores de versiones distintas no son directamente comparables. |
+| `FIXED` | Usa exclusivamente `normalization_bounds`. | Comparable entre batches y sesiones con la misma firma. |
+
+`FIXED` requiere bounds para todos los objetivos. La transformacion no hace clipping;
+un valor fuera de rango puede quedar fuera de `[0, 1]`. Una columna constante vale
+cero porque no discrimina candidatos.
+
+### Scalarizacion
+
+```python
+WeightedMeanScalarizer(weights=None)  # media uniforme explicita
+WeightedMeanScalarizer({"quality": 0.7, "latency": 0.3})
+```
+
+Los pesos opcionales se identifican por `Objective.name`, deben cubrir exactamente el
+esquema, ser finitos y no negativos, y contener al menos uno positivo. Se normalizan
+para sumar uno. El scalarizer recibe valores orientados a maximizacion: normalizados
+si hay normalizer, y brutos en caso contrario.
+
+### Runtime Y Resultados Objetivos
+
+`OptimizationSession` crea internamente un `ObjectiveRuntime` mediante
+`ObjectiveSet.bind()`. Una instancia pertenece a una sola sesion y mantiene el estado
+de normalizacion sin contaminar otras ejecuciones que reutilicen el mismo
+`ObjectiveSet`.
+
+```python
+ObjectiveValues(
+    names,
+    raw,
+    minimize,
+    maximize,
+    normalized_minimize=None,
+    normalized_maximize=None,
+    aggregate_score=None,
+)
+
+EvaluatedIndividual(
+    evaluation,
+    objective_values,
+    status,
+    error=None,
+)
+
+EvaluatedBatch(
+    items,
+    objective_names,
+    batch_index=None,
+    normalization_state=None,
+)
+```
+
+`EvaluatedIndividual.individual` es una propiedad derivada de `evaluation`, no un
+campo duplicado. `EvaluatedBatch` implementa `Sequence[EvaluatedIndividual]` y expone
+`evaluations`, `individuals`, `valid_items`, `valid_indices`, mascaras, matrices y
+scores. Las matrices normales incluyen solo items validos, sin ceros implicitos.
+
+Los estados son `VALID`, `EVALUATION_FAILED`, `INVALID_OBJECTIVES` y `NOT_CONFIGURED`.
+Una evaluacion fallida no usa metricas parciales. Un resultado exitoso con una metrica
+ausente, booleana, no numerica o no finita queda como `INVALID_OBJECTIVES`. La
+normalizacion y scalarizacion se ajustan solo con filas validas. El runtime prepara
+todo el batch y publica el nuevo estado de forma transaccional.
+
+### Extender Normalizers Y Scalarizers
+
+Un `Normalizer` implementa `validate(schema)`, `fit(values, *, schema, previous)`,
+`transform(values, state)`, `restore_state(data)` y `checkpoint_signature()`. Su estado
+concreto implementa `NormalizationState.checkpoint_state()`.
+
+Un `Scalarizer` implementa `validate(schema)`, `scalarize(objective_names, values)` y
+`checkpoint_signature()`. Ambas firmas deben ser completas, deterministas y
+serializables como JSON; las clases base rechazan una firma implicita.
 
 ## 3. Extender Artefactos
 
@@ -518,6 +706,8 @@ Contrato:
 class EvaluationStep(ABC):
     id: str
     depends_on: tuple[str, ...] = ()
+    required_artifacts: Mapping[str, type[Artifact]] = {}
+    produced_artifacts: Mapping[str, type[Artifact]] = {}
     task_type: type[EvaluationTask] = EvaluationTask
 
     def create_task(
@@ -532,6 +722,9 @@ Responsabilidades:
 
 - Declarar el id logico del paso.
 - Declarar dependencias con `depends_on`.
+- Declarar artefactos consumidos con claves cualificadas en `required_artifacts`.
+- Declarar todos los artefactos que una task exitosa puede devolver mediante
+  nombres locales en `produced_artifacts`.
 - Declarar el tipo de task que produce mediante `task_type`.
 - Crear una task concreta para un individuo.
 - Usar artefactos acumulados de pasos anteriores si el step depende de ellos.
@@ -544,6 +737,7 @@ from genio import EvaluationStep, Individual
 class FunctionalStep(EvaluationStep):
     id = "functional"
     task_type = FunctionalEvaluationTask
+    produced_artifacts = {"metrics": FunctionalMetricsArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return FunctionalEvaluationTask(individual=individual, step_id=self.id)
@@ -556,6 +750,8 @@ class HlsStep(EvaluationStep):
     id = "hls"
     depends_on = ("compose",)
     task_type = HlsEvaluationTask
+    required_artifacts = {"compose.project": ProjectArtifact}
+    produced_artifacts = {"rtl": RTLArtifact}
 
     def create_task(self, individual, artifacts):
         project = artifacts["compose.project"]
@@ -571,6 +767,9 @@ Reglas:
 - `create_task(...)` debe devolver una instancia de `task_type`.
 - `id` debe ser unico dentro del workflow.
 - `depends_on` debe referenciar steps existentes.
+- Los nombres de `produced_artifacts` son locales, no vacios y no contienen `.`.
+- Cada requisito debe estar declarado por su productor y su tipo debe ser compatible.
+- Una task exitosa no puede devolver artifacts no declarados o de otro individuo.
 
 ## 7. Declarar Workflows De Evaluacion
 
@@ -783,7 +982,13 @@ class StatisticsCollector(ABC):
     def on_batch_started(self, batch_index: int, individuals: Sequence[Individual]) -> None:
         pass
 
+    def on_proposals_generated(self, proposals: Sequence[Proposal]) -> None:
+        pass
+
     def on_evaluation_completed(self, evaluation: Evaluation) -> None:
+        pass
+
+    def on_evaluated_batch(self, batch: EvaluatedBatch) -> None:
         pass
 
     def on_batch_completed(self, batch_index: int, evaluations: Sequence[Evaluation]) -> None:
@@ -800,10 +1005,15 @@ Responsabilidades:
 
 - Observar eventos de sesion.
 - Observar batches completos, que pueden representar generaciones en algoritmos evolutivos.
-- Acumular metricas de seguimiento.
+- Acumular metricas crudas, estados objetivos, vectores orientados/normalizados y scores.
 - Devolver un snapshot serializable.
 
 `OptimizationSession.run()` anota `batch_index` en `Evaluation.metadata`, por lo que cada evaluacion del resultado final puede asociarse al batch en el que fue producida.
+
+Para un batch normal, la sesion emite propuestas, evaluaciones individuales y, tras
+aceptar `tell(batch)` y comprometer su historia, `on_evaluated_batch(batch)` y
+`on_batch_completed(...)`. Un collector que no pueda persistir datos debe propagar el
+error; la sesion quedara en estado fallido terminal.
 
 Ejemplo:
 
@@ -814,6 +1024,7 @@ class MetricHistory(StatisticsCollector):
     def __init__(self) -> None:
         self.history = []
         self.batches = []
+        self.objective_batches = []
 
     def on_batch_completed(self, batch_index, evaluations):
         self.batches.append({
@@ -830,43 +1041,122 @@ class MetricHistory(StatisticsCollector):
     def on_evaluation_completed(self, evaluation):
         self.history.append(dict(evaluation.result.metrics))
 
+    def on_evaluated_batch(self, batch):
+        self.objective_batches.append({
+            "batch_index": batch.batch_index,
+            "items": [
+                {
+                    "id": item.individual.id,
+                    "status": item.status.value,
+                    "error": item.error,
+                    "raw": (
+                        list(item.objective_values.raw)
+                        if item.objective_values is not None
+                        else None
+                    ),
+                    "aggregate_score": (
+                        item.objective_values.aggregate_score
+                        if item.objective_values is not None
+                        else None
+                    ),
+                }
+                for item in batch
+            ],
+        })
+
     def snapshot(self):
-        return {"metrics": self.history, "batches": self.batches}
+        return {
+            "metrics": self.history,
+            "batches": self.batches,
+            "objective_batches": self.objective_batches,
+        }
 ```
+
+`CSVStatisticsCollector` implementa este hook y añade a cada fila `objective_status`,
+`objective_error`, `normalization_version`, `aggregate_score` y columnas
+`objective.<name>.*` para los valores raw, orientados y normalizados. El manifest
+incluye la firma del conjunto objetivo y el summary agrega estadisticas objetivas.
+Este CSV/JSON es el lugar previsto para analisis historico a posteriori.
 
 ## 11. Montar Una Sesion Completa
 
-Una sesion conecta espacio de busqueda, algoritmo, backend y workflow.
+Una sesion conecta espacio de busqueda, algoritmo, backend, workflow y la configuracion
+objetiva opcional. Este ejemplo usa bounds fijos y scalarizer explicito para mantener
+scores comparables durante varias generaciones:
 
 ```python
+from random import Random
+
 from genio import (
-    EvaluationWorkflow,
-    LocalBackend,
+    GeneticSearch,
     MetricObjective,
+    MinMaxNormalizer,
+    NSGA2Search,
+    NormalizationScope,
+    ObjectiveSet,
     OptimizationDirection,
     OptimizationSession,
+    WeightedMeanScalarizer,
 )
 
-objective = MetricObjective(
-    metric="functional.f1",
-    optimization_direction=OptimizationDirection.MAXIMIZE,
+objective_set = ObjectiveSet(
+    objectives=(
+        MetricObjective(
+            "python_image_functional.mask_f1",
+            OptimizationDirection.MAXIMIZE,
+            name="quality",
+            normalization_bounds=(0.0, 1.0),
+        ),
+        MetricObjective(
+            "hls_image_pipeline_synthesis.hls_synthesis.lut",
+            OptimizationDirection.MINIMIZE,
+            name="lut",
+            normalization_bounds=(0.0, 100_000.0),
+        ),
+        MetricObjective(
+            "xheep_verilator_simulation.xheep_verilator.application_cycles",
+            OptimizationDirection.MINIMIZE,
+            name="cycles",
+            normalization_bounds=(0.0, 10_000_000.0),
+        ),
+    ),
+    normalizer=MinMaxNormalizer(NormalizationScope.FIXED),
+    scalarizer=WeightedMeanScalarizer(
+        {"quality": 0.5, "lut": 0.2, "cycles": 0.3}
+    ),
 )
 
-algorithm = BestScoreAlgorithm(objective=objective, limit=10)
-
-workflow = EvaluationWorkflow((
-    FunctionalStep(),
-))
-
-session = OptimizationSession(
+genetic_result = OptimizationSession(
     search_space=search_space,
-    algorithm=algorithm,
-    backend=LocalBackend(),
+    algorithm=GeneticSearch(
+        population_size=32,
+        max_generations=12,
+        random=Random(7),
+    ),
+    backend=genetic_backend,
     evaluation_workflow=workflow,
-)
+    objective_set=objective_set,
+).run()
 
-result = session.run()
+nsga2_result = OptimizationSession(
+    search_space=search_space,
+    algorithm=NSGA2Search(
+        population_size=32,
+        max_generations=12,
+        seed=7,
+    ),
+    backend=nsga2_backend,
+    evaluation_workflow=workflow,
+    objective_set=objective_set,
+).run()
 ```
+
+Genetic exige el scalarizer y usa su score. Para varias generaciones no acepta scopes
+`BATCH` ni `CUMULATIVE`, ya que no producen scores estacionarios; con normalizacion se
+debe usar `FIXED`. NSGA-II usa el vector orientado a minimizacion y no necesita el
+scalarizer para evolucionar, aunque en este ejemplo se conserva para estadisticas
+comparables. Genetic decide su mejor fitness y NSGA-II conserva el frente final nativo
+de `pymoo` en sus respectivos `best_individuals`.
 
 ## 12. Extension Por Tipo De Necesidad
 
@@ -880,15 +1170,15 @@ EvaluationTask.run -> MetricArtifact.metrics -> Result.metrics
 
 ### Necesito Un Nuevo Criterio De Optimizacion
 
-Usar `MetricObjective` si basta una metrica. Crear una subclase de `Objective` si hay combinacion, penalizacion o normalizacion.
+Usar `MetricObjective` si basta una metrica. Crear una subclase de `Objective` si hay combinacion o penalizacion, y configurar la normalizacion separadamente.
 
 ```text
-Result.metrics -> Objective.value/score -> SearchAlgorithm
+Result.metrics -> ObjectiveRuntime -> EvaluatedBatch -> SearchAlgorithm
 ```
 
 ### Necesito Un Nuevo Algoritmo
 
-Crear una subclase de `SearchAlgorithm`. Si requiere ranking, inyectar `Objective`. Si requiere Pareto, inyectar `ObjectiveSet`.
+Crear una subclase de `SearchAlgorithm`, validar sus necesidades en `configure(context)` y consumir `EvaluatedBatch`. El `ObjectiveSet` se configura en `OptimizationSession`, no se inyecta en el algoritmo.
 
 ### Necesito Un Nuevo Paso De Evaluacion
 
@@ -910,6 +1200,8 @@ El último step demuestra cómo consumir un artefacto RTL, materializar un check
 externo aislado, preservar symlinks, ejecutar comandos dentro de Conda y convertir
 líneas `GENIO_METRIC:nombre:valor` en métricas. Véase
 [Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
+El compositor selecciona exclusivamente mediante `application_name` los flujos
+`genio_trans_mem_mem`, `genio_trans_mem_flash` o `genio_trans_flash_mem`.
 
 ### Necesito Un Nuevo Backend
 
@@ -925,22 +1217,43 @@ Crear una subclase de `StatisticsCollector`.
 
 ## 13. Reglas De Integracion
 
-- Las metricas que consume el algoritmo siempre deben venir de `Result.metrics`.
+- Los objetivos proceden siempre de `Result.metrics`, pero el algoritmo los recibe ya transformados en `EvaluatedBatch`.
 - Los nombres de metricas agregadas siguen la forma `step_id.metric_name`.
 - Los nombres de artefactos acumulados siguen la forma `step_id.artifact_name`.
 - Los artefactos no metricos no se devuelven en `Result`.
-- `Objective` y `ObjectiveSet` no son obligatorios en `OptimizationSession`.
-- Los algoritmos concretos deciden si necesitan objetivo, conjunto de objetivos o ninguno.
+- `ObjectiveSet` es opcional en `OptimizationSession`; sus estrategias tienen defaults `None`.
+- Los algoritmos declaran sus requisitos mediante `SearchContext` y deciden su propio `best_individuals()`.
+- `ObjectiveSet` no almacena historia ni selecciona resultados globales.
+- La ponderacion de objetivos pertenece a `WeightedMeanScalarizer`.
+- Para comparar scores entre generaciones se necesita una escala estable, normalmente `MinMaxNormalizer(FIXED)` con bounds completos.
 - `batch_index` en `Evaluation.metadata` permite reconstruir poblaciones o generaciones evaluadas.
 - El backend no debe contener logica de dominio.
 - Las tasks son el lugar correcto para ejecutar herramientas, materializar archivos y producir artefactos.
+
+### Checkpoints De Extensiones
+
+Toda extension que participe en la firma de una sesion debe declarar de forma
+determinista y serializable como JSON la configuracion que afecta a su comportamiento:
+
+- `Objective`, `Normalizer` y `Scalarizer` deben implementar siempre `checkpoint_signature()`; sus bases rechazan la firma implicita.
+- `SearchAlgorithm`, `StatisticsCollector`, `EvaluationStep`, `Composer` y `Backend` deben incluir todos sus parametros relevantes en `checkpoint_signature()`.
+- La configuracion de una `EvaluationTask` queda cubierta por el `EvaluationStep` que la construye.
+- Un algoritmo con `supports_checkpointing=True` implementa `checkpoint_state()` y `restore_checkpoint_state(state, *, search_space, evaluated_batches)`.
+- Un normalizer con estado implementa `NormalizationState.checkpoint_state()` y `restore_state(data)`.
+- El estado mutable no debe duplicar la historia: los `EvaluatedBatch` de la sesion son la fuente autoritativa para restaurar algoritmos.
+- `OptimizationSession` es el unico lector y escritor del formato de checkpoint; no existen schemas versionados ni formatos por algoritmo.
+
+Cambiar una metrica, bound, peso, template, dataset, backend o parametro algorítmico
+debe cambiar la firma y hacer incompatible la reanudacion.
 
 ## 14. Mapa Rapido De Clases Abstractas
 
 | Clase | Se extiende para | Metodo clave |
 | --- | --- | --- |
-| `SearchAlgorithm` | Nuevas estrategias de busqueda | `ask`, `tell`, `should_stop` |
-| `Objective` | Nuevos criterios escalares o compuestos | `value` |
+| `SearchAlgorithm` | Nuevas estrategias de busqueda | `configure`, `ask`, `tell`, `should_stop` |
+| `Objective` | Nuevos criterios escalares o compuestos | `value`, `checkpoint_signature` |
+| `Normalizer` | Nuevas transformaciones vectoriales con estado propio | `validate`, `fit`, `transform`, `restore_state` |
+| `Scalarizer` | Nuevas agregaciones a score | `validate`, `scalarize` |
 | `Artifact` | Nuevas salidas consumibles por steps | `load` |
 | `MetricArtifact` | Nuevas salidas metricas | `metrics` |
 | `EvaluationTask` | Nuevas unidades ejecutables | `run` |
@@ -957,7 +1270,9 @@ Crear una subclase de `StatisticsCollector`.
 4. Implementar un `EvaluationStep` por paso logico.
 5. Construir un `EvaluationWorkflow` con dependencias explicitas.
 6. Elegir `LocalBackend` o implementar un `Backend` propio.
-7. Implementar o configurar un `SearchAlgorithm`.
-8. Definir `MetricObjective` u `ObjectiveSet` si el algoritmo necesita comparar resultados.
-9. Crear un `StatisticsCollector` si se necesitan historicos o trazas.
-10. Ejecutar la sesion con `OptimizationSession`.
+7. Implementar o configurar un `SearchAlgorithm` con `configure`, `ask()` y `tell(batch)`.
+8. Definir `ObjectiveSet` en la sesion si el algoritmo necesita comparar resultados.
+9. Elegir explicitamente normalizer y scalarizer; usar bounds fijos si se comparan generaciones.
+10. Implementar firmas completas de checkpoint para todas las extensiones configurables.
+11. Crear un `StatisticsCollector` si se necesitan historicos o trazas.
+12. Ejecutar la sesion con `OptimizationSession`.

@@ -1,3 +1,5 @@
+"""Executable evaluation tasks and their backend-provided runtime context."""
+
 from __future__ import annotations
 
 import json
@@ -23,7 +25,15 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
-    """Result of a command executed through an evaluation context."""
+    """Capture a command invocation executed through an evaluation context.
+
+    Attributes:
+        command: Exact argument vector passed to the process launcher.
+        returncode: Process exit code.
+        stdout: Complete captured standard output.
+        stderr: Complete captured standard error.
+        cwd: Resolved working directory, when one was supplied.
+    """
 
     command: tuple[str, ...]
     returncode: int
@@ -34,7 +44,21 @@ class CommandResult:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
-    """Runtime context provided by a backend to executable tasks."""
+    """Provide filesystem, process, and cancellation services to tasks.
+
+    Backends may override these operations to execute them on another host. Tasks
+    should therefore use the context instead of direct filesystem or subprocess
+    calls whenever their work must be backend-portable.
+
+    The conventional workspace layout is
+    ``base_work_dir/individual_id/step_id/{package,artifacts,logs}``.
+
+    Attributes:
+        base_work_dir: Root directory for all task workspaces.
+        run_id: Optional optimization-run identifier supplied by the backend.
+        backend_id: Optional identity of the backend instance.
+        metadata: Backend resources and execution configuration available to tasks.
+    """
 
     base_work_dir: Path
     run_id: str | None = None
@@ -60,7 +84,11 @@ class ExecutionContext:
     )
 
     def resolve_path(self, path: str | Path) -> Path:
-        """Resolve a path against the base working directory."""
+        """Resolve a relative path against the base working directory.
+
+        Absolute paths are returned unchanged. This is a convenience resolver,
+        not a sandbox boundary; callers are responsible for trusted paths.
+        """
 
         resolved = Path(path)
         if not resolved.is_absolute():
@@ -83,7 +111,7 @@ class ExecutionContext:
         return Path(path).is_dir()
 
     def task_dir(self, task: EvaluationTask, *parts: str | Path) -> Path:
-        """Return a path within a task's working directory."""
+        """Return a path below the task's individual and step workspace."""
 
         step_id = task.step_id or "task"
         return self.base_work_dir.joinpath(task.individual.id, step_id, *parts)
@@ -103,7 +131,11 @@ class ExecutionContext:
         task: EvaluationTask,
         package: ExecutionPackage,
     ) -> Path:
-        """Materialize an execution package in a task's package directory."""
+        """Materialize an execution package in the task's package directory.
+
+        Returns:
+            The concrete package directory returned by the package implementation.
+        """
 
         return package.materialize(self.package_dir(task))
 
@@ -213,7 +245,12 @@ class ExecutionContext:
         return merged
 
     def cancel(self) -> bool:
-        """Reject future commands and terminate command groups currently running."""
+        """Reject future commands and terminate active command groups.
+
+        Cancellation is irreversible for this context. The first request returns
+        ``True``; subsequent requests return ``False``. Python work that does not
+        use :meth:`run_command` cannot be interrupted by this mechanism.
+        """
 
         with self._process_lock:
             if self._cancel_requested.is_set():
@@ -234,7 +271,29 @@ class ExecutionContext:
         timeout: float | None = None,
         check: bool = True,
     ) -> CommandResult:
-        """Run a command within the execution context and return its result."""
+        """Run a subprocess with captured output and cooperative cancellation.
+
+        Args:
+            command: Program and arguments. Shell parsing is never used.
+            cwd: Optional working directory, resolved through :meth:`resolve_path`.
+            env: Values merged over the current process environment.
+            timeout: Maximum execution time in seconds, or ``None`` for no limit.
+            check: Raise when the process returns a non-zero status.
+
+        Returns:
+            The command, status, output streams, and resolved working directory.
+
+        Raises:
+            concurrent.futures.CancelledError: If cancellation was requested before
+                or during execution.
+            subprocess.TimeoutExpired: If the process exceeds ``timeout``. Captured
+                output is attached after its process group is terminated.
+            RuntimeError: If ``check`` is true and the process exits unsuccessfully.
+
+        Note:
+            On POSIX, each command starts a new process session so cancellation and
+            timeouts terminate the complete process group rather than only its root.
+        """
 
         resolved_cwd = self.resolve_path(cwd) if cwd is not None else None
         normalized_command = tuple(command)
@@ -257,6 +316,7 @@ class ExecutionContext:
             except subprocess.TimeoutExpired as exc:
                 self._terminate_process_group(process)
                 stdout, stderr = process.communicate()
+                assert timeout is not None
                 raise subprocess.TimeoutExpired(
                     normalized_command,
                     timeout,
@@ -315,7 +375,14 @@ class ExecutionContext:
 
 @dataclass(frozen=True, slots=True)
 class EvaluationTask(ABC):
-    """Executable unit of work created by an evaluation step."""
+    """Executable unit of work created for one individual and workflow step.
+
+    Attributes:
+        individual: Candidate whose configuration the task evaluates.
+        id: Optional explicit task identifier.
+        step_id: Producing workflow-step identifier used for workspace names.
+        metadata: Fixed task configuration, including optional execution settings.
+    """
 
     individual: Individual
     id: str | None = None
@@ -333,12 +400,25 @@ class EvaluationTask(ABC):
         return self.individual.id
 
     def cache_inputs(self) -> Mapping[str, Any] | None:
-        """Return semantic variable inputs for caching, or None to bypass it."""
+        """Return semantic variable inputs for caching, or ``None`` to bypass it.
+
+        Subclasses should include every value that can vary between otherwise
+        identical task instances and change produced artifacts. Values must have a
+        deterministic JSON/string representation accepted by the configured cache.
+        Fixed step configuration may remain in the cache namespace contract.
+        """
 
         return None
 
     def execution_timeout_seconds(self) -> float | None:
-        """Return a positive timeout from execution metadata, or None if disabled."""
+        """Return a positive timeout from execution metadata, or ``None``.
+
+        The value is read from ``metadata.execution.timeout_seconds``.
+
+        Raises:
+            ValueError: If execution metadata is malformed or the timeout is not a
+                positive real number.
+        """
 
         execution = self.metadata.get("execution", {})
         if not isinstance(execution, Mapping):
@@ -353,6 +433,7 @@ class EvaluationTask(ABC):
         return float(timeout)
 
     def _pipeline_cache_inputs(self) -> tuple[dict[str, Any], ...]:
+        """Serialize the individual's ordered pipeline as cache-key input."""
         return tuple(
             {
                 "slot": choice.slot,
@@ -365,4 +446,13 @@ class EvaluationTask(ABC):
 
     @abstractmethod
     def run(self, context: ExecutionContext) -> list[Artifact]:
-        """Execute this task using backend-provided runtime context."""
+        """Execute this task using a backend-provided runtime context.
+
+        Implementations should place persistent outputs below ``artifact_path``
+        and return artifacts bound to this task's individual. Raised exceptions
+        are propagated by the backend and converted to failed results by the
+        standard executor.
+
+        Returns:
+            Artifacts produced by the task for downstream steps and metrics.
+        """

@@ -27,12 +27,16 @@ from genio import (
     LocalBackend,
     MetricArtifact,
     MetricObjective,
+    NSGA2Search,
+    ObjectiveSet,
     OptimizationDirection,
     OptimizationSession,
     RandomSearch,
     SearchAlgorithm,
+    SearchContext,
     SearchSpace,
     StageChoice,
+    WeightedMeanScalarizer,
 )
 from genio.search_space import SearchScenarioSpec, SlotSpec
 
@@ -71,6 +75,7 @@ class IndexMetricTask(EvaluationTask):
 class IndexMetricStep(EvaluationStep):
     id = "score"
     task_type = IndexMetricTask
+    produced_artifacts = {"score": IndexMetricArtifact}
 
     def checkpoint_signature(self):
         return EvaluationStep.checkpoint_signature(self)
@@ -80,7 +85,7 @@ class IndexMetricStep(EvaluationStep):
 
 
 class UnsupportedAlgorithm(SearchAlgorithm):
-    def ask(self, session):
+    def ask(self):
         return ()
 
     def tell(self, evaluations):
@@ -124,6 +129,7 @@ def make_session(
     policy: CheckpointPolicy | None = None,
     statistics=None,
     artifact_cache=None,
+    objective_set: ObjectiveSet | None = None,
 ) -> OptimizationSession:
     return OptimizationSession(
         search_space=search_space or make_search_space(),
@@ -135,6 +141,7 @@ def make_session(
         run_id=run_id,
         checkpoint_policy=policy,
         artifact_cache=artifact_cache,
+        objective_set=objective_set,
     )
 
 
@@ -181,6 +188,7 @@ def test_json_checkpoint_store_roundtrip_latest_and_retention(tmp_path) -> None:
         store.save({"status": "running", "value": sequence}, sequence=sequence)
 
     assert store.load()["value"] == 4
+    assert "schema_version" not in store.load()
     snapshot_names = [
         path.name for path in sorted(tmp_path.glob("checkpoint-*.json"))
     ]
@@ -244,7 +252,6 @@ def test_json_checkpoint_store_rejects_latest_path_traversal(tmp_path) -> None:
         json.dumps(
             {
                 "format": store.LATEST_FORMAT,
-                "schema_version": store.SCHEMA_VERSION,
                 "checkpoint": "../outside.json",
                 "sha256": "unused",
             }
@@ -300,20 +307,27 @@ def test_checkpointing_rejects_artifact_cache_until_it_is_persistable(tmp_path) 
 
 def test_manual_checkpoint_is_rejected_before_start_and_during_ask(tmp_path) -> None:
     class SavingRandomSearch(RandomSearch):
-        def ask(self, session):
-            individuals = super().ask(session)
-            session.save_checkpoint()
+        session: OptimizationSession
+
+        def ask(self):
+            individuals = super().ask()
+            self.session.save_checkpoint()
             return individuals
 
     checkpoint_dir = tmp_path / "checkpoints"
+    algorithm = SavingRandomSearch(max_evaluations=1)
     session = make_session(
         tmp_path,
-        algorithm=SavingRandomSearch(max_evaluations=1),
+        algorithm=algorithm,
         policy=CheckpointPolicy(directory=checkpoint_dir),
     )
+    algorithm.session = session
     with pytest.raises(CheckpointStateError, match="started"):
         session.save_checkpoint()
     with pytest.raises(CheckpointStateError, match="batch is in progress"):
+        session.run()
+    assert session.failed
+    with pytest.raises(CheckpointStateError, match="FAILED"):
         session.run()
     assert not (checkpoint_dir / "latest.json").exists()
 
@@ -365,6 +379,9 @@ def test_random_session_resume_matches_uninterrupted_execution(tmp_path) -> None
     interrupt_after_running_checkpoint(interrupted, completed_batches=1)
     with pytest.raises(PlannedInterruption):
         interrupted.run()
+    assert "evaluations" not in JSONCheckpointStore(
+        CheckpointPolicy(directory=checkpoint_dir)
+    ).load()["algorithm"]
 
     resumed = make_session(
         tmp_path / "resumed",
@@ -403,6 +420,9 @@ def test_grid_session_resume_matches_uninterrupted_execution(tmp_path) -> None:
     interrupt_after_running_checkpoint(interrupted, completed_batches=1)
     with pytest.raises(PlannedInterruption):
         interrupted.run()
+    assert "evaluations" not in JSONCheckpointStore(
+        CheckpointPolicy(directory=checkpoint_dir)
+    ).load()["algorithm"]
 
     resumed = make_session(
         tmp_path / "resumed",
@@ -427,10 +447,6 @@ def test_genetic_session_resume_restores_rng_lineage_and_best(tmp_path) -> None:
 
     def algorithm(seed: int) -> GeneticSearch:
         return GeneticSearch(
-            objectives=MetricObjective(
-                "score.score",
-                OptimizationDirection.MAXIMIZE,
-            ),
             population_size=4,
             mutation_probability=0.5,
             max_generations=3,
@@ -438,9 +454,15 @@ def test_genetic_session_resume_restores_rng_lineage_and_best(tmp_path) -> None:
             random=Random(seed),
         )
 
+    objective_set = ObjectiveSet(
+        (MetricObjective("score.score", OptimizationDirection.MAXIMIZE),),
+        scalarizer=WeightedMeanScalarizer(),
+    )
+
     reference_session = make_session(
         tmp_path / "reference",
         algorithm=algorithm(31),
+        objective_set=objective_set,
     )
     reference = reference_session.run()
 
@@ -449,10 +471,21 @@ def test_genetic_session_resume_restores_rng_lineage_and_best(tmp_path) -> None:
         tmp_path / "interrupted",
         algorithm=algorithm(31),
         policy=CheckpointPolicy(directory=checkpoint_dir),
+        objective_set=objective_set,
     )
     interrupt_after_running_checkpoint(interrupted, completed_batches=1)
     with pytest.raises(PlannedInterruption):
         interrupted.run()
+    genetic_state = JSONCheckpointStore(
+        CheckpointPolicy(directory=checkpoint_dir)
+    ).load()["algorithm"]
+    assert not {
+        "evaluations",
+        "last_evaluations",
+        "generation_bests",
+        "generation_fitnesses",
+        "global_best",
+    } & set(genetic_state)
 
     resumed_algorithm = algorithm(999)
     resumed = make_session(
@@ -463,6 +496,7 @@ def test_genetic_session_resume_restores_rng_lineage_and_best(tmp_path) -> None:
             directory=checkpoint_dir,
             resume_from=checkpoint_dir / "latest.json",
         ),
+        objective_set=objective_set,
     ).run()
 
     assert result_signature(resumed) == result_signature(reference)
@@ -477,14 +511,89 @@ def test_genetic_session_resume_restores_rng_lineage_and_best(tmp_path) -> None:
 def test_genetic_search_rejects_checkpoint_with_pending_generation() -> None:
     search_space = make_search_space()
     algorithm = GeneticSearch(
-        objectives=MetricObjective("score", OptimizationDirection.MAXIMIZE),
         population_size=4,
         max_generations=1,
     )
-    algorithm.ask(type("Session", (), {"search_space": search_space})())
+    algorithm.configure(
+        SearchContext(
+            search_space=search_space,
+            objective_schema=ObjectiveSet(
+                (MetricObjective("score", OptimizationDirection.MAXIMIZE),),
+                scalarizer=WeightedMeanScalarizer(),
+            ).schema,
+            has_scalarizer=True,
+        )
+    )
+    algorithm.ask()
 
     with pytest.raises(CheckpointStateError, match="awaiting tell"):
         algorithm.checkpoint_state()
+
+
+def test_nsga2_session_resume_reuses_persisted_objective_batches(tmp_path) -> None:
+    initial_population = (
+        (0, 0, 0),
+        (0, 1, 1),
+        (1, 0, 0),
+        (1, 1, 1),
+    )
+    objective_set = ObjectiveSet(
+        (
+            MetricObjective(
+                "score.score",
+                OptimizationDirection.MAXIMIZE,
+                name="maximize_score",
+            ),
+            MetricObjective(
+                "score.score",
+                OptimizationDirection.MINIMIZE,
+                name="minimize_score",
+            ),
+        )
+    )
+
+    def algorithm(seed: int) -> NSGA2Search:
+        return NSGA2Search(
+            population_size=4,
+            max_generations=2,
+            initial_population=initial_population,
+            seed=seed,
+        )
+
+    reference = make_session(
+        tmp_path / "nsga2-reference",
+        algorithm=algorithm(17),
+        objective_set=objective_set,
+    ).run()
+
+    checkpoint_dir = tmp_path / "nsga2-checkpoints"
+    interrupted = make_session(
+        tmp_path / "nsga2-interrupted",
+        algorithm=algorithm(17),
+        objective_set=objective_set,
+        policy=CheckpointPolicy(directory=checkpoint_dir),
+    )
+    interrupt_after_running_checkpoint(interrupted, completed_batches=1)
+    with pytest.raises(PlannedInterruption):
+        interrupted.run()
+    assert "evaluations" not in JSONCheckpointStore(
+        CheckpointPolicy(directory=checkpoint_dir)
+    ).load()["algorithm"]
+
+    resumed_session = make_session(
+        tmp_path / "nsga2-resumed",
+        algorithm=algorithm(17),
+        objective_set=objective_set,
+        run_id=None,
+        policy=CheckpointPolicy(
+            directory=checkpoint_dir,
+            resume_from=checkpoint_dir / "latest.json",
+        ),
+    )
+    resumed = resumed_session.run()
+
+    assert result_signature(resumed) == result_signature(reference)
+    assert len(resumed_session._evaluated_batches) == 2
 
 
 @pytest.mark.parametrize(
@@ -554,7 +663,7 @@ def test_completed_checkpoint_resume_executes_no_tasks(tmp_path) -> None:
     assert resumed.statistics == original.statistics
 
 
-def test_failed_completion_publication_can_be_retried(tmp_path) -> None:
+def test_failed_completion_publication_makes_session_terminal(tmp_path) -> None:
     checkpoint_dir = tmp_path / "checkpoints"
     session = make_session(
         tmp_path,
@@ -578,10 +687,24 @@ def test_failed_completion_publication_can_be_retried(tmp_path) -> None:
         session.run()
 
     store.save = original_save
-    result = session.run()
+    with pytest.raises(CheckpointStateError, match="FAILED"):
+        session.run()
+    with pytest.raises(CheckpointStateError, match="FAILED"):
+        session.save_checkpoint()
 
+    result = make_session(
+        tmp_path / "resumed",
+        algorithm=RandomSearch(max_evaluations=2, batch_size=1, random=Random(99)),
+        run_id=None,
+        policy=CheckpointPolicy(
+            directory=checkpoint_dir,
+            resume_from=checkpoint_dir / "latest.json",
+        ),
+    ).run()
     assert len(result.evaluations) == 2
-    assert store.load()["status"] == "completed"
+    assert JSONCheckpointStore(
+        CheckpointPolicy(directory=checkpoint_dir)
+    ).load()["status"] == "completed"
 
 
 def test_csv_statistics_resume_rebuilds_committed_rows(tmp_path) -> None:

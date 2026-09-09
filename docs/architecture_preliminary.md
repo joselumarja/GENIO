@@ -21,7 +21,7 @@ La clase que conecta estas piezas es `OptimizationSession`.
 OptimizationSession
 ├── SearchSpace
 ├── SearchAlgorithm
-├── Objective / ObjectiveSet opcional en algoritmos concretos
+├── ObjectiveSet opcional y ObjectiveRuntime privado
 ├── EvaluationWorkflow
 │   └── EvaluationStep[]
 │       └── EvaluationTask
@@ -37,7 +37,9 @@ OptimizationSession.run()
         ↓
 StatisticsCollector.on_session_started(session)
         ↓
-SearchAlgorithm.ask(session)
+SearchAlgorithm.configure(SearchContext)
+        ↓
+SearchAlgorithm.ask()
         ↓
 Individual[]
         ↓
@@ -83,11 +85,17 @@ Result.success(individual.id, metrics=accumulated_metrics)
         ↓
 OptimizationSession crea Evaluation con metadata de Proposal
         ↓
+ObjectiveRuntime.evaluate_batch(evaluations)
+        ↓
+EvaluatedBatch
+        ↓
 StatisticsCollector.on_evaluation_completed(evaluation)
         ↓
-SearchAlgorithm.tell(evaluations)
+SearchAlgorithm.tell(evaluated_batch)
         ↓
-SearchAlgorithm usa Objective/ObjectiveSet si su estrategia lo necesita
+SearchAlgorithm consume las vistas objetivo que necesita
+        ↓
+StatisticsCollector.on_evaluated_batch(evaluated_batch)
         ↓
 StatisticsCollector.on_batch_completed(batch_index, evaluations)
         ↓
@@ -107,11 +115,12 @@ StatisticsCollector.on_session_completed(result)
 - Solo los artefactos que heredan de `MetricArtifact` se transforman en `Result.metrics`.
 - `Result.metrics` contiene datos numericos sin semantica de optimizacion.
 - `Objective` selecciona metricas concretas y declara si se maximizan o minimizan.
-- Cada algoritmo concreto decide si no necesita objetivos, si necesita un objetivo escalar o si necesita un `ObjectiveSet` multiobjetivo.
+- `ObjectiveSet` pertenece a la sesion y configura extraccion, normalizacion y scalarizacion.
+- Cada algoritmo valida el `ObjectiveSchema` y consume el `EvaluatedBatch` que necesita.
 - `Backend` proporciona infraestructura comun: workspace base, contexto, handles, estados, errores y recogida de artefactos.
 - `Backend` no conoce logica especifica de dominio como Vitis, OpenCV, Git, plantillas o datasets.
 - `ExecutionContext` contiene informacion de runtime/backend, no configuracion especifica del dominio.
-- Configuraciones especificas como plantillas Vitis, rutas de dataset, comandos de toolchain o pesos de scoring deben vivir en la `EvaluationTask`, en artefactos de entrada o en objetos de configuracion propios.
+- Configuraciones especificas como plantillas Vitis, rutas de dataset o comandos de toolchain deben vivir en la `EvaluationTask`, en artefactos de entrada o en objetos de configuracion propios. Los pesos de scoring pertenecen al `Scalarizer` de `ObjectiveSet`.
 - `evaluation_workflow` es obligatorio en `OptimizationSession`; no existe evaluacion por defecto independiente del dominio.
 
 ## Clases Implementadas
@@ -138,6 +147,7 @@ OptimizationSession(
     metadata: dict[str, Any] | None = None,
     artifact_cache: ArtifactCache | None = None,
     checkpoint_policy: CheckpointPolicy | None = None,
+    objective_set: ObjectiveSet | None = None,
 )
 ```
 
@@ -201,9 +211,9 @@ el snapshot publicado actualmente.
 
 El payload contiene:
 
-- Estado versionado del algoritmo y su RNG.
+- Estado minimo del algoritmo, como su RNG o cursor nativo.
 - Estado del asignador de IDs de `SearchSpace`.
-- Evaluaciones comprometidas y metadata de propuestas.
+- Evaluaciones y batches objetivos comprometidos, almacenados una sola vez por la sesion.
 - Siguiente batch y siguiente secuencia de propuesta.
 - Estado del collector de estadisticas.
 - `session_id`, `run_id` y estado terminal o en ejecucion.
@@ -222,7 +232,8 @@ exponen metodos `checkpoint_signature()` para declarar configuracion relevante. 
 algoritmos implementados exponen ademas `checkpoint_state()` y
 `restore_checkpoint_state(...)`.
 
-La primera version no persiste batches en curso, handles, procesos ni conexiones.
+El formato es unico y responsabilidad de `OptimizationSession`; no existen versiones
+ni formatos por algoritmo. No se persisten batches en curso, handles, procesos ni conexiones.
 Una interrupcion durante un batch restaura el ultimo batch completo y repite el
 siguiente con los mismos IDs y estado RNG. Tampoco se permite todavia combinar
 checkpoints con `ArtifactCache`, porque restaurar sin sus entries cambiaria la
@@ -493,8 +504,9 @@ Contrato abstracto para algoritmos de busqueda mediante el patron `ask/tell`.
 Interfaz:
 
 ```python
-ask(session: OptimizationSession) -> Sequence[Individual]
-tell(evaluations: Sequence[Evaluation]) -> None
+configure(context: SearchContext) -> None
+ask() -> Sequence[Individual]
+tell(batch: EvaluatedBatch) -> None
 should_stop() -> bool
 best_individuals() -> Sequence[Individual]
 ```
@@ -502,8 +514,7 @@ best_individuals() -> Sequence[Individual]
 Responsabilidades:
 
 - Proponer individuos.
-- Recibir evaluaciones.
-- Interpretar resultados, metricas y errores.
+- Recibir evaluaciones y objetivos ya interpretados en `EvaluatedBatch`.
 - Mantener estado interno de busqueda.
 - Decidir cuando detenerse.
 - Exponer mejores individuos.
@@ -520,8 +531,6 @@ Constructor:
 
 ```python
 GeneticSearch(
-    objectives: Objective | ObjectiveSet,
-    weights: Mapping[str, float] | None = None,
     population_size: int = 80,
     mutation_probability: float = 0.05,
     max_generations: int = 20,
@@ -532,27 +541,28 @@ GeneticSearch(
 )
 ```
 
+`GeneticSearch` requiere que la sesion configure un `Scalarizer`. Para mas de una
+generacion, el score debe ser comparable: sin normalizacion o con normalizacion
+`FIXED`. Los objetivos, bounds y pesos se configuran en `ObjectiveSet`.
+
 Proceso por generacion:
 
-1. Normalizar cada objetivo independientemente mediante min-max entre individuos exitosos.
-2. Orientar objetivos para que valores mayores de fitness sean siempre mejores.
-3. Combinar objetivos usando pesos relativos normalizados.
-4. Asignar fitness cero a evaluaciones fallidas.
-5. Descartar de la ruleta fitness inferiores a la mediana de la poblacion.
-6. Seleccionar el primer padre por ruleta y el segundo media vuelta despues.
-7. Generar hermanos complementarios mediante crossover uniforme por gen.
-8. Aplicar a cada hijo una sustitucion de un unico gen con la probabilidad configurada.
-9. Reemplazar por completo la poblacion anterior, sin elitismo.
+1. Recibir el score agregado calculado por `ObjectiveRuntime`.
+2. Asignar fitness cero a evaluaciones fallidas.
+3. Descartar de la ruleta fitness inferiores a la mediana de la poblacion.
+4. Seleccionar el primer padre por ruleta y el segundo media vuelta despues.
+5. Generar hermanos complementarios mediante crossover uniforme por gen.
+6. Aplicar a cada hijo una sustitucion de un unico gen con la probabilidad configurada.
+7. Reemplazar por completo la poblacion anterior, sin elitismo.
 
 La inicializacion y la mutacion de genes de pipeline usan muestreo balanceado por
 tipo de stage. Los parametros de design forman parte del mismo genotipo y se cruzan
 y mutan de forma uniforme. Se permiten genotipos duplicados, pero cada propuesta se
 materializa como un `Individual` nuevo con ID y metadata de generacion propios.
 
-Los pesos se identifican por `Objective.name` y deben cubrir exactamente todos los
-objetivos. Un objetivo constante aporta cero porque no permite discriminar candidatos,
-corrigiendo la base artificial que el explorador heredado sumaba a objetivos constantes
-de minimizacion. Si todos los fitness retenidos son cero, los padres se seleccionan
+Los pesos se identifican por `Objective.name` y se validan en `WeightedMeanScalarizer`.
+Un objetivo constante normalizado aporta cero porque no permite discriminar candidatos.
+Si todos los fitness retenidos son cero, los padres se seleccionan
 uniformemente entre evaluaciones exitosas. Si falla toda la generacion, la siguiente
 poblacion se reinicializa de forma aleatoria.
 
@@ -575,8 +585,8 @@ Metadata generada por individuo:
 }
 ```
 
-`best_individuals()` devuelve el mejor individuo global al renormalizar todos los
-resultados exitosos. `generation_best_individuals()` conserva el mejor de cada
+`best_individuals()` devuelve el mejor individuo global segun los scores comparables
+recibidos. `generation_best_individuals()` conserva el mejor de cada
 generacion y `generation_fitnesses()` expone los fitness usados para seleccion.
 
 La adaptacion corrige defectos del codigo heredado: poblaciones impares, generacion
@@ -608,10 +618,7 @@ Interfaz:
 name: str
 direction: OptimizationDirection
 value(evaluation: Evaluation) -> float
-score(evaluation: Evaluation) -> float
 ```
-
-`score(...)` normaliza la direccion para algoritmos monoobjetivo: devuelve el valor original si se maximiza y el valor negado si se minimiza.
 
 Responsabilidades:
 
@@ -638,8 +645,10 @@ Constructor:
 ```python
 MetricObjective(
     metric: str,
-    optimization_direction: OptimizationDirection,
-    id: str | None = None,
+    direction: OptimizationDirection | str,
+    *,
+    name: str | None = None,
+    normalization_bounds: tuple[float, float] | None = None,
 )
 ```
 
@@ -647,33 +656,39 @@ Reglas:
 
 - `metric` es la clave que se lee desde `evaluation.result.metrics`.
 - `id` permite dar un nombre estable distinto de la clave de metrica.
-- Si `id` no se proporciona, `name` devuelve `metric`.
+- Si `name` no se proporciona, toma el valor de `metric`.
 - Rechaza metricas ausentes, booleanos y valores no numericos.
 
 Ejemplo:
 
 ```python
 MetricObjective("functional.f1", OptimizationDirection.MAXIMIZE)
-MetricObjective("hls.latency", OptimizationDirection.MINIMIZE, id="latency")
+MetricObjective("hls.latency", OptimizationDirection.MINIMIZE, name="latency")
 ```
 
 ### `ObjectiveSet`
 
 Ubicacion: `src/genio/objective/base.py`
 
-Agrupa varios objetivos para algoritmos multiobjetivo o basados en Pareto.
+Configura la extraccion ordenada de objetivos y las estrategias opcionales de
+normalizacion y scalarizacion de una sesion.
 
 Constructor:
 
 ```python
-ObjectiveSet(objectives: tuple[Objective, ...])
+ObjectiveSet(
+    objectives: Sequence[Objective],
+    normalizer: Normalizer | None = None,
+    scalarizer: Scalarizer | None = None,
+)
 ```
 
 Interfaz:
 
 ```python
-values(evaluation: Evaluation) -> dict[str, float]
-scores(evaluation: Evaluation) -> dict[str, float]
+schema: ObjectiveSchema
+bind() -> ObjectiveRuntime
+checkpoint_signature() -> Mapping[str, Any]
 ```
 
 Reglas:
@@ -681,31 +696,28 @@ Reglas:
 - Requiere al menos un objetivo.
 - Rechaza nombres de objetivos duplicados.
 - Preserva el orden de los objetivos para algoritmos que necesiten vectores.
-
-### `dominates(...)`
-
-Ubicacion: `src/genio/objective/base.py`
-
-Utilidad para dominancia Pareto.
-
-```python
-dominates(left: Evaluation, right: Evaluation, objectives: ObjectiveSet) -> bool
-```
-
-Usa `objective.direction` para comparar cada componente. `left` domina a `right` si no es peor en ningun objetivo y es estrictamente mejor en al menos uno.
+- La extraccion se realiza exclusivamente a traves del runtime creado por la
+  sesion; `ObjectiveSet` no interpreta evaluaciones directamente.
 
 ### Relacion Con Algoritmos
 
-Los objetivos no son obligatorios en `OptimizationSession`. Cada algoritmo concreto declara lo que necesita:
+Los objetivos son opcionales para la sesion. Los algoritmos escalares o
+multiobjetivo validan durante `configure()` que la sesion proporcione el esquema
+que necesitan:
 
 ```python
 GridSearch()
 RandomSearch()
-HillClimbing(objective=MetricObjective("quality.f1", OptimizationDirection.MAXIMIZE))
-NSGA2(objectives=ObjectiveSet((
+algorithm = NSGA2Search()
+objective_set = ObjectiveSet((
     MetricObjective("quality.f1", OptimizationDirection.MAXIMIZE),
     MetricObjective("hls.latency", OptimizationDirection.MINIMIZE),
-)))
+))
+session = OptimizationSession(
+    algorithm=algorithm,
+    objective_set=objective_set,
+    ...,
+)
 ```
 
 Separacion de responsabilidades:
@@ -741,6 +753,8 @@ Responsabilidades:
 - Validar ids duplicados.
 - Validar dependencias inexistentes.
 - Detectar ciclos.
+- Construir el catalogo cualificado de artefactos producidos.
+- Validar estaticamente que cada requisito exista y tenga un tipo compatible.
 - Calcular orden de ejecucion compatible con dependencias.
 
 ### `EvaluationWorkflowError`
@@ -767,6 +781,8 @@ Interfaz:
 class EvaluationStep(ABC):
     id: str
     depends_on: tuple[str, ...] = ()
+    required_artifacts: Mapping[str, type[Artifact]] = {}
+    produced_artifacts: Mapping[str, type[Artifact]] = {}
     task_type: type[EvaluationTask] = EvaluationTask
 
     @abstractmethod
@@ -782,6 +798,8 @@ Responsabilidades:
 
 - Declarar un identificador de paso.
 - Declarar dependencias mediante `depends_on`.
+- Declarar entradas cualificadas mediante `required_artifacts`.
+- Declarar salidas locales mediante `produced_artifacts`.
 - Declarar el tipo concreto de task que produce mediante `task_type`.
 - Crear una `EvaluationTask` concreta para un individuo.
 - Usar artefactos acumulados de pasos previos para construir tareas dependientes.
@@ -789,6 +807,8 @@ Responsabilidades:
 Restriccion:
 
 - `create_task(...)` debe devolver una instancia de `step.task_type`.
+- El workflow comprueba antes de ejecutar que cada artifact requerido esta declarado
+  por una dependencia directa con un tipo compatible.
 
 ### `EvaluationExecutor` y `EvaluationExecutionError`
 
@@ -809,12 +829,14 @@ Responsabilidades:
 - Recorrer `EvaluationWorkflow.execution_order()`.
 - Crear tasks mediante `EvaluationStep.create_task(...)`.
 - Validar coherencia `step.task_type` vs instancia creada.
+- Validar que la task pertenece al individuo y step solicitados.
 - Enviar tasks al backend.
 - Recoger artefactos desde el backend.
 - Acumular artefactos internamente con claves `step_id.artifact_name` para alimentar steps dependientes.
 - Extraer metricas desde `MetricArtifact` con claves `step_id.metric_name`.
 - Componer un `Result.success(...)` por individuo con `metrics`, sin incluir artefactos no metricos en el `Result`.
 - Rechazar claves duplicadas de artefactos o metricas.
+- Rechazar artifacts no declarados, de tipo incorrecto o asociados a otro individuo.
 - Rechazar metricas no numericas.
 
 `EvaluationExecutionError` se lanza cuando un step declara un `task_type` pero crea una task incompatible, cuando se detectan claves duplicadas de artefactos o metricas, o cuando un `MetricArtifact` expone valores no numericos.
@@ -1343,7 +1365,7 @@ El CSV contiene representaciones JSON canonicas de genotype, pipeline, design y 
 OptimizationSession
 ├── search_space: SearchSpace
 ├── algorithm: SearchAlgorithm
-│   └── objective/objectives: Objective | ObjectiveSet opcional
+├── objective_set: ObjectiveSet opcional, propiedad de la sesion
 ├── backend: Backend
 ├── evaluation_workflow: EvaluationWorkflow
 │   └── steps: tuple[EvaluationStep, ...]
@@ -1453,6 +1475,7 @@ class ScoreTask(EvaluationTask):
 class ScoreStep(EvaluationStep):
     id = "score"
     task_type = ScoreTask
+    produced_artifacts = {"score": ScoreArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return ScoreTask(individual=individual, step_id=self.id)
@@ -1461,11 +1484,11 @@ class FirstIndividualAlgorithm(SearchAlgorithm):
     def __init__(self) -> None:
         self._evaluations: list[Evaluation] = []
 
-    def ask(self, session: OptimizationSession):
-        return [session.search_space.from_index(0, id="individual_001")]
+    def ask(self):
+        return [self.context.search_space.from_index(0, id="individual_001")]
 
-    def tell(self, evaluations):
-        self._evaluations.extend(evaluations)
+    def tell(self, batch):
+        self._evaluations.extend(batch.evaluations)
 
     def should_stop(self) -> bool:
         return bool(self._evaluations)

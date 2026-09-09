@@ -1,4 +1,4 @@
-from genio.algorithm.base import SearchAlgorithm
+from genio.algorithm.base import SearchAlgorithm, SearchContext
 from genio.algorithm.genetic import GeneticSearch
 from genio.algorithm.grid import GridSearch
 from genio.algorithm.nsga2 import NSGA2Search
@@ -10,4 +10,5 @@ __all__ = [
     "NSGA2Search",
     "RandomSearch",
     "SearchAlgorithm",
+    "SearchContext",
 ]

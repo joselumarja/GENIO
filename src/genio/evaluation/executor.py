@@ -1,3 +1,5 @@
+"""Workflow executor that composes backend artifacts into results."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -37,7 +39,17 @@ class _TaskExecutionGroup:
 
 
 class EvaluationExecutor:
-    """Executes an evaluation workflow for individuals using a backend."""
+    """Execute an evaluation workflow for individuals through a backend.
+
+    Steps are processed in topological order. Within one step, all active tasks
+    are submitted before their handles are collected, allowing parallel backends
+    to execute a wave concurrently. Failed individuals retain metrics from prior
+    steps and are skipped by every later step.
+
+    When a cache is configured, tasks with equal semantic inputs are coalesced so
+    that only one representative executes. Cached artifacts are cloned and rebound
+    to every equivalent individual.
+    """
 
     def __init__(
         self,
@@ -45,17 +57,46 @@ class EvaluationExecutor:
         backend: Backend,
         artifact_cache: ArtifactCache | None = None,
     ) -> None:
+        """Configure a workflow executor.
+
+        Args:
+            workflow: Valid dependency graph to execute for every individual.
+            backend: Scheduler responsible for task runtime contexts and handles.
+            artifact_cache: Optional session-scoped cache for successful task
+                artifact bundles.
+        """
         self.workflow = workflow
         self.backend = backend
         self.artifact_cache = artifact_cache
 
     def evaluate(self, individual: Individual) -> Result:
-        """Evaluate an individual through the configured workflow."""
+        """Evaluate one individual through the configured workflow.
+
+        Returns:
+            The normalized result for ``individual``.
+        """
 
         return self.evaluate_many((individual,))[0]
 
     def evaluate_many(self, individuals: Sequence[Individual]) -> list[Result]:
-        """Evaluate individuals in parallel waves while preserving input order."""
+        """Evaluate an ordered batch using one backend wave per workflow step.
+
+        Backend exceptions raised while collecting a task are converted into a
+        failed result for all coalesced members of that task. Structural errors,
+        such as invalid tasks, missing artifacts, duplicate artifact names, or
+        non-numeric metrics, abort the complete call instead.
+
+        Args:
+            individuals: Candidates with IDs unique within this batch.
+
+        Returns:
+            One result per input individual in the original order. Successful
+            metric keys use the form ``step_id.metric_name``.
+
+        Raises:
+            EvaluationExecutionError: If candidate IDs or a workflow/task/artifact
+                contract is invalid.
+        """
 
         individual_batch = tuple(individuals)
         self._validate_unique_individual_ids(individual_batch)
@@ -66,6 +107,8 @@ class EvaluationExecutor:
             if not active_states:
                 break
 
+            # A step is a batch barrier; concurrency within the wave is delegated
+            # to the selected backend.
             execution_groups = self._prepare_execution_groups(step, active_states)
             handles = self.backend.submit_batch(
                 [group.task for group in execution_groups]
@@ -121,6 +164,7 @@ class EvaluationExecutor:
         step: EvaluationStep,
         states: Sequence[_IndividualEvaluationState],
     ) -> list[_TaskExecutionGroup]:
+        """Resolve tasks, cache hits, and same-wave coalescing for one step."""
         bypass_groups: list[_TaskExecutionGroup] = []
         cache_groups: dict[str, _TaskExecutionGroup] = {}
 
@@ -155,10 +199,15 @@ class EvaluationExecutor:
             else:
                 group.members.append(state)
 
+        if not cache_groups:
+            return bypass_groups
+
         pending_groups: list[_TaskExecutionGroup] = []
+        artifact_cache = self.artifact_cache
+        assert artifact_cache is not None
         for group in cache_groups.values():
             assert group.cache_key is not None
-            entry = self.artifact_cache.get(
+            entry = artifact_cache.get(
                 group.namespace or step.id,
                 group.cache_key,
                 reads=len(group.members),
@@ -192,6 +241,7 @@ class EvaluationExecutor:
         group: _TaskExecutionGroup,
         entry: CacheEntry,
     ) -> None:
+        """Rebind one cached artifact bundle to all equivalent individuals."""
         for state in group.members:
             state.cache_metadata[step.id] = {
                 "status": "hit",
@@ -207,6 +257,7 @@ class EvaluationExecutor:
             )
 
     def _fail_group(self, group: _TaskExecutionGroup, exc: Exception) -> None:
+        """Convert a backend execution exception into failed member results."""
         for state in group.members:
             state.result = Result.failed(
                 state.individual.id,
@@ -221,8 +272,14 @@ class EvaluationExecutor:
         artifacts: Sequence[Artifact],
         state: _IndividualEvaluationState,
     ) -> None:
+        """Add qualified artifacts and any metrics they expose to a state."""
         for artifact in artifacts:
-            self._accumulate_artifact(step, artifact, state.artifacts)
+            self._accumulate_artifact(
+                step,
+                artifact,
+                state.individual.id,
+                state.artifacts,
+            )
             if isinstance(artifact, MetricArtifact):
                 self._accumulate_metrics(step, artifact, state.metrics)
 
@@ -261,6 +318,15 @@ class EvaluationExecutor:
                 f"{type(task).__name__}."
             )
             raise EvaluationExecutionError(msg)
+        if task.individual != individual:
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} created a task for a different individual."
+            )
+        if task.step_id != step.id:
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} created a task with step_id "
+                f"{task.step_id!r}."
+            )
         return task
 
     @staticmethod
@@ -289,8 +355,29 @@ class EvaluationExecutor:
         self,
         step: EvaluationStep,
         artifact: Artifact,
+        individual_id: str,
         accumulated_artifacts: dict[str, Artifact],
     ) -> None:
+        if not isinstance(artifact, Artifact):
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} returned a non-Artifact value."
+            )
+        if artifact.individual_id != individual_id:
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} returned artifact {artifact.name!r} "
+                "for a different individual."
+            )
+        declared_type = step.produced_artifacts.get(artifact.name)
+        if declared_type is None:
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} returned undeclared artifact "
+                f"{artifact.name!r}."
+            )
+        if not isinstance(artifact, declared_type):
+            raise EvaluationExecutionError(
+                f"Evaluation step {step.id!r} declared artifact {artifact.name!r} "
+                f"as {declared_type.__name__}, but returned {type(artifact).__name__}."
+            )
         artifact_key = f"{step.id}.{artifact.name}"
         if artifact_key in accumulated_artifacts:
             msg = f"Duplicate artifact key {artifact_key!r}."

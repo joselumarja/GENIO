@@ -1,3 +1,5 @@
+"""Load finite search scenarios and materialize their individuals."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +9,7 @@ from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
 from random import Random
-from typing import Any
+from typing import Any, Callable, ClassVar
 
 from genio.core import Individual, StageChoice
 
@@ -37,16 +39,24 @@ def _square(rows: int, cols: int) -> bool:
 
 @dataclass(init=False, slots=True)
 class SearchSpace:
-    """Factory and context for Individuals belonging to one search scenario.
+    """Load, index, and sample individuals belonging to one search scenario.
 
-    Each slot contains only valid concrete alternatives. A genotype is a tuple
-    of local sequence numbers, one per slot. The global search_index is the
-    mixed-radix encoding of that genotype using each slot length as base.
+    Stage parameter specifications are expanded eagerly into valid concrete
+    alternatives. A genotype first contains one gene per pipeline slot, followed
+    by one gene per parameter in the ordered design domains. ``search_index`` is
+    the mixed-radix encoding of the complete genotype using each domain length as
+    its base.
+
+    The object also owns the monotonically increasing identifier allocator used
+    when individuals are created without an explicit ID.
+
+    Attributes:
+        scenario: Expanded finite specification loaded from the scenario files.
     """
 
     scenario: SearchScenarioSpec
     _next_id: int = field(default=0, init=False, repr=False)
-    _ALLOWED_CONSTRAINT_FUNCTIONS = {
+    _ALLOWED_CONSTRAINT_FUNCTIONS: ClassVar[dict[str, Callable[..., Any]]] = {
         "abs": abs,
         "divisible_by": _divisible_by,
         "is_even": _is_even,
@@ -63,6 +73,21 @@ class SearchSpace:
         test_file: str | Path,
         stages_definitions_path: str | Path,
     ) -> None:
+        """Load a search scenario and its referenced stage definitions.
+
+        Args:
+            test_file: JSON scenario containing ``id``, ``pipeline``, and
+                optionally ``design_spaces``.
+            stages_definitions_path: Directory whose immediate child directories
+                contain stage definition JSON files.
+
+        Raises:
+            OSError: If a configuration file cannot be read.
+            json.JSONDecodeError: If a configuration file is not valid JSON.
+            KeyError: If a required configuration field is missing.
+            ValueError: If slots, stages, parameters, or constraints are invalid.
+            SyntaxError: If a substituted constraint is not valid Python syntax.
+        """
         self.scenario = self._load_scenario(
             Path(test_file),
             Path(stages_definitions_path),
@@ -72,7 +97,18 @@ class SearchSpace:
 
     @classmethod
     def from_scenario(cls, scenario: SearchScenarioSpec) -> "SearchSpace":
-        """Create a search space from an existing scenario specification."""
+        """Create a search space from an already expanded specification.
+
+        Args:
+            scenario: Finite scenario whose slot indexes and alternatives should
+                be validated.
+
+        Returns:
+            A search space with a fresh automatic-ID sequence.
+
+        Raises:
+            ValueError: If the scenario has no slots or its slots are malformed.
+        """
         search_space = cls.__new__(cls)
         search_space.scenario = scenario
         search_space._next_id = 0
@@ -184,7 +220,21 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
-        """Create an individual from a mixed-radix genotype."""
+        """Create an individual from a complete mixed-radix genotype.
+
+        Args:
+            genotype: One valid local index for every slot and design parameter.
+            id: Optional candidate identifier. A scenario-scoped ID is allocated
+                when omitted.
+            metadata: Optional provenance attached to the resulting individual.
+
+        Returns:
+            The selected stages and design values as an :class:`Individual`.
+
+        Raises:
+            ValueError: If the genotype has the wrong length or a gene lies
+                outside its domain.
+        """
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
@@ -214,7 +264,19 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
-        """Create an individual from its search-space index."""
+        """Create an individual from its global search-space index.
+
+        Args:
+            search_index: Integer in ``[0, search_space_size)``.
+            id: Optional candidate identifier.
+            metadata: Optional provenance attached to the individual.
+
+        Returns:
+            The individual decoded from the mixed-radix index.
+
+        Raises:
+            ValueError: If ``search_index`` is outside the finite search space.
+        """
         return self.from_genotype(
             self.index_to_genotype(search_index),
             id=id,
@@ -228,7 +290,16 @@ class SearchSpace:
         id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
-        """Create an individual from valid stage choices."""
+        """Create an individual from valid choices in a slot-only scenario.
+
+        This convenience method derives genes only for pipeline slots. Scenarios
+        with additional design dimensions must use :meth:`from_genotype` so that
+        values for those dimensions are explicit.
+
+        Raises:
+            ValueError: If choices are missing, duplicated, invalid for a slot,
+                or do not form the complete genotype expected by the scenario.
+        """
         genotype = self.slots_to_genotype(tuple(slots))
         return self.from_genotype(genotype, id=id, metadata=metadata)
 
@@ -238,7 +309,19 @@ class SearchSpace:
         random: Random | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
-        """Sample an individual uniformly across genotype positions."""
+        """Sample an individual uniformly from the complete genotype space.
+
+        Every gene is drawn independently and uniformly from its local domain.
+        Consequently every valid complete genotype has equal probability.
+
+        Args:
+            random: Random generator used for reproducible sampling. A new
+                unseeded generator is created when omitted.
+            metadata: Optional provenance attached to the individual.
+
+        Returns:
+            A newly materialized individual with an automatically allocated ID.
+        """
         rng = random or Random()
         genotype = tuple(rng.randrange(length) for length in self.genotype_lengths)
         return self.from_genotype(genotype, metadata=metadata)
@@ -249,7 +332,13 @@ class SearchSpace:
         random: Random | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Individual:
-        """Sample an individual while balancing stage selection within each slot."""
+        """Sample an individual while balancing stage names within each slot.
+
+        For each slot, a stage name is chosen uniformly and then one of that
+        stage's parameter variants is chosen uniformly. Design dimensions remain
+        uniformly sampled. This differs from uniform genotype sampling whenever
+        stages expand to different numbers of alternatives.
+        """
         rng = random or Random()
         genotype = tuple(self._sample_balanced_gene(slot, rng) for slot in self.scenario.slots)
         genotype += tuple(rng.randrange(length) for length in self.design_lengths)
@@ -288,7 +377,24 @@ class SearchSpace:
         metadata: dict[str, Any] | None = None,
         exclude_indexes: set[int] | None = None,
     ) -> list[Individual]:
-        """Sample a population of individuals from the search space."""
+        """Sample a population uniformly from the genotype space.
+
+        Args:
+            size: Number of individuals to create.
+            unique: Prevent duplicate search indexes within this call. The search
+                space does not remember individuals returned by previous calls.
+            random: Random generator used for reproducible sampling.
+            metadata: Metadata attached to every sampled individual. The same
+                non-empty mapping instance is reused by all returned individuals.
+            exclude_indexes: Existing indexes to exclude when ``unique`` is true.
+
+        Returns:
+            Individuals in sampling order.
+
+        Raises:
+            ValueError: If ``size`` is negative or requests more unique values
+                than remain available.
+        """
         return self._sample_population(
             size,
             unique=unique,
@@ -307,7 +413,12 @@ class SearchSpace:
         metadata: dict[str, Any] | None = None,
         exclude_indexes: set[int] | None = None,
     ) -> list[Individual]:
-        """Sample a population with stage-balanced slot selection."""
+        """Sample a population using stage-balanced slot selection.
+
+        ``unique`` and ``exclude_indexes`` have the same call-local semantics as
+        :meth:`sample_population`. Rejected duplicates are sampled again until
+        the requested population is complete.
+        """
         return self._sample_population(
             size,
             unique=unique,
@@ -369,7 +480,14 @@ class SearchSpace:
         return self.scenario.slots[slot_index]
 
     def genotype_to_index(self, genotype: tuple[int, ...] | list[int]) -> int:
-        """Encode a genotype as its mixed-radix search-space index."""
+        """Encode a complete genotype as its mixed-radix search-space index.
+
+        The first gene is the most significant digit and the final gene is the
+        least significant digit.
+
+        Raises:
+            ValueError: If the genotype length or any gene is invalid.
+        """
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
@@ -379,7 +497,11 @@ class SearchSpace:
         return index
 
     def index_to_genotype(self, search_index: int) -> tuple[int, ...]:
-        """Decode a search-space index into its mixed-radix genotype."""
+        """Decode a global index into its complete mixed-radix genotype.
+
+        Raises:
+            ValueError: If the index is negative or outside the search space.
+        """
         if search_index < 0:
             raise ValueError("search_index cannot be negative.")
         if search_index >= self.search_space_size:
@@ -398,7 +520,15 @@ class SearchSpace:
         return tuple(reversed(genes))
 
     def slots_to_genotype(self, slots: tuple[StageChoice, ...]) -> tuple[int, ...]:
-        """Convert stage choices into their slot genotype."""
+        """Convert concrete stage choices into the slot portion of a genotype.
+
+        Returns:
+            One local alternative index per scenario slot.
+
+        Raises:
+            ValueError: If slots are missing, duplicated, or contain an unknown
+                concrete alternative.
+        """
         if len(slots) != len(self.scenario.slots):
             raise ValueError(
                 f"Expected {len(self.scenario.slots)} slots, got {len(slots)}."
@@ -426,7 +556,11 @@ class SearchSpace:
         return tuple(genes)
 
     def to_index(self, individual: Individual) -> int:
-        """Return the search-space index of an individual."""
+        """Return the validated search-space index of an individual.
+
+        The index is recomputed from slots and design values instead of trusting
+        ``individual.search_index``.
+        """
         if individual.scenario != self.scenario.id:
             raise ValueError(
                 f"Individual scenario {individual.scenario!r} does not match "
@@ -435,7 +569,11 @@ class SearchSpace:
         return self.genotype_to_index(self.to_genotype(individual))
 
     def to_genotype(self, individual: Individual) -> tuple[int, ...]:
-        """Return the genotype represented by an individual."""
+        """Reconstruct and validate the genotype represented by an individual.
+
+        Missing design values use the first value of their domain. If the object
+        already carries a genotype, it must match the reconstructed value.
+        """
         slot_genotype = self.slots_to_genotype(individual.slots)[: len(self.scenario.slots)]
         genotype = slot_genotype + self._design_to_genotype(individual.design)
         if individual.genotype is not None and individual.genotype != genotype:
@@ -504,6 +642,11 @@ class SearchSpace:
         test_file: Path,
         stages_definitions_path: Path,
     ) -> SearchScenarioSpec:
+        """Parse a scenario file and expand every finite search dimension.
+
+        Top-level fields other than ``id``, ``pipeline``, and ``design_spaces``
+        are preserved as scenario metadata for downstream components.
+        """
         with test_file.open("r", encoding="utf-8") as file:
             test_config = json.load(file)
 
@@ -548,6 +691,12 @@ class SearchSpace:
     def _load_stage_definitions(
         stages_definitions_path: Path,
     ) -> dict[str, dict[str, Any]]:
+        """Load stage definitions from ``*/*.json`` below a definitions root.
+
+        Definitions are keyed by their JSON ``id``. This method is also the
+        internal loading contract reused by composers so search-space expansion
+        and code generation resolve the same stage definitions.
+        """
         definitions: dict[str, dict[str, Any]] = {}
 
         for definition_file in stages_definitions_path.glob("*/*.json"):
@@ -590,6 +739,12 @@ class SearchSpace:
         candidate_config: dict[str, Any],
         stage_definition: dict[str, Any],
     ) -> list[StageChoice]:
+        """Expand one stage candidate into constraint-valid concrete choices.
+
+        Parameter domains are combined using a Cartesian product. For candidates
+        that declare parameters, the stage definition's constraints are evaluated
+        for every combination.
+        """
         stage = candidate_config["stage"]
         parameter_specs = candidate_config.get("parameters", {})
         wrapper_inputs = candidate_config.get("wrapper_inputs", {})
@@ -627,6 +782,11 @@ class SearchSpace:
 
     @staticmethod
     def _parameter_values(parameter_spec: dict[str, Any]) -> tuple[Any, ...]:
+        """Expand a finite parameter specification into ordered concrete values.
+
+        Supported types are ``constant``, ``choice``, ``integer_range``, and
+        ``number_range``. Both range variants exclude ``stop``.
+        """
         parameter_type = parameter_spec["type"]
 
         if parameter_type == "constant":
@@ -688,6 +848,18 @@ class SearchSpace:
         constraint: str,
         token_values: dict[str, Any],
     ) -> bool:
+        """Evaluate a tokenized stage constraint using the restricted AST DSL.
+
+        Tokens are replaced by literal values before parsing. Only literals,
+        containers, comparisons, boolean operations, basic arithmetic, and the
+        functions listed in ``_ALLOWED_CONSTRAINT_FUNCTIONS`` are accepted; no
+        Python globals, attributes, or keyword arguments are exposed.
+
+        Raises:
+            ValueError: If tokens remain unresolved or the expression contains
+                unsupported Python syntax.
+            SyntaxError: If the substituted expression is not syntactically valid.
+        """
         expression = constraint
         for token, value in sorted(token_values.items(), key=lambda item: len(item[0]), reverse=True):
             expression = expression.replace(token, repr(value))

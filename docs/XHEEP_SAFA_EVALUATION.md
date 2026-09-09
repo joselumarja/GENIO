@@ -27,7 +27,7 @@ El host de ejecución debe proporcionar:
 El ejemplo `tests/run_insect_random_search.py` usa:
 
 ```python
-GR_HEEP_PATH = Path("/home/joselu/Integration/GEN-HEEP")
+GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
 ```
 
 Cada comando X-HEEP se ejecuta como:
@@ -46,9 +46,9 @@ xheep_step = XHeepVerilatorSimulationEvaluationStep(
     composer=GRHeepConfigurationComposer(
         ROOT / "search_space/stages/definitions",
         templates_path=ROOT / "gr_heep_templates",
+        application_name="genio_trans_flash_mem",
     ),
-    gr_heep_path=Path("/home/joselu/Integration/GEN-HEEP"),
-    input_image_path=sample_image,
+    gr_heep_path=Path("/home/joselu/Universidad/Doctorado/GEN-HEEP"),
     metadata={"execution": {"timeout_seconds": 1800}},
 )
 ```
@@ -57,12 +57,50 @@ El step requiere un `HLSRTLArtifact` con `metadata["interface"] == "safa_fifo"`.
 El nombre del módulo superior y las dimensiones de entrada/salida se obtienen del
 artefacto HLS.
 
+El nombre de la aplicación se configura exclusivamente mediante
+`GRHeepConfigurationComposer.application_name`. El step y la tarea de simulación lo
+obtienen del compositor para generar el overlay y sustituir `{application_name}` en
+los comandos, evitando configuraciones divergentes.
+
+### Aplicaciones Y Flujos De Datos
+
+Las tres plantillas seleccionables mantienen el mismo protocolo SAFA y de metricas,
+pero cambian donde reside la entrada y donde termina la salida:
+
+| `application_name` | Flujo esperado | Observaciones |
+|---|---|---|
+| `genio_trans_mem_mem` | SRAM -> DMA HW FIFO -> SAFA -> SRAM | La imagen embebida y el buffer de salida residen en memoria del sistema. |
+| `genio_trans_mem_flash` | SRAM -> DMA HW FIFO -> SAFA -> SRAM de staging -> SPI flash | La salida se programa en W25Q128JW despues de terminar SAFA. `FLASH_OUTPUT_OFFSET` selecciona una region alineada a sector. |
+| `genio_trans_flash_mem` | SPI flash -> FIFO RX SPI -> DMA HW FIFO -> SAFA -> SRAM | La imagen queda en la seccion flash-only y se lee por SPI estandar; la salida permanece en memoria. |
+
+En `genio_trans_mem_flash` no se puede conectar directamente el stream de salida de
+SAFA a la memoria SPI: W25Q128JW exige borrado de sectores, `WRITE ENABLE`, comandos
+`PAGE PROGRAM`, limites de pagina y esperas de estado `BUSY`. El DMA HW FIFO no
+implementa esa maquina de estados, por lo que el buffer SRAM de staging es parte del
+flujo previsto. En `genio_trans_flash_mem`, en cambio, el FIFO RX del controlador SPI
+si proporciona una fuente con backpressure utilizable directamente por el DMA.
+
+Para seleccionar otro flujo solo cambia el compositor:
+
+```python
+composer = GRHeepConfigurationComposer(
+    ROOT / "search_space/stages/definitions",
+    templates_path=ROOT / "gr_heep_templates",
+    application_name="genio_trans_mem_flash",
+    application_defaults={"FLASH_OUTPUT_OFFSET": "0x00900000"},
+)
+```
+
+`application_defaults` debe contener un offset de salida solo para la variante que
+escribe flash. No se configura un segundo nombre de aplicacion en
+`XHeepVerilatorSimulationEvaluationStep` ni en `XHeepVerilatorSimulationTask`.
+
 La secuencia predeterminada es:
 
 ```text
 make mcu-gen
 make verilator-build
-make app PROJECT=genio_target
+make app PROJECT=<application_name seleccionado>
 make verilator-run
 ```
 
@@ -84,13 +122,15 @@ en el build vendorizado y los targets de simulación lo consumen mediante `sw/bu
 - `hw/vendor/safa/rtl/safa_wrapper.sv`.
 - El `.core` de FuseSoC y todos los ficheros RTL producidos por HLS.
 - El driver SAFA y su mapa de registros.
-- La aplicación `sw/applications/genio_target`.
+- La aplicación seleccionada, por ejemplo `sw/applications/genio_trans_mem_mem`.
 - `genio_app_config.h` con tamaños derivados del artefacto HLS.
 - `main.h` con la imagen de entrada embebida.
 
 Si se proporciona `input_image_path`, el composer carga la imagen con OpenCV, la
 redimensiona a las dimensiones de entrada HLS y empaqueta sus píxeles BGR en palabras
 little-endian de 32 bits. Sin imagen se utiliza un patrón sintético determinista.
+La plantilla seleccionada decide si esas palabras se enlazan en SRAM o en una seccion
+flash-only; esta eleccion no se codifica en el individuo ni en la task.
 
 ## Hiperparámetros Del Sistema
 
@@ -161,7 +201,8 @@ SAFA expone por MMIO:
 | `safa_output_words` | Palabras extraídas de SAFA. |
 
 El firmware también informa `traffic_words`, `traffic_checksum`, ciclos de aplicación
-y estado final.
+y estado final. Las variantes con SPI añaden metricas de bytes, offsets y ciclos de
+lectura o escritura flash sin cambiar las etiquetas comunes de SAFA.
 
 ## Formato De Log Y Métricas
 
@@ -186,6 +227,46 @@ xheep_verilator_simulation.xheep_verilator.application_cycles
 
 La simulación se considera fallida si falta `GENIO_STATUS`, si su valor no es cero o
 si X-HEEP informa un `Program Finished with value` distinto de cero.
+
+## Uso Como Objetivos
+
+Las metricas permanecen crudas en `Result.metrics`. Su direccion, normalizacion y
+ponderacion se configuran en el `ObjectiveSet` de `OptimizationSession`, no en la task
+X-HEEP. Por ejemplo, una escala estable para varias generaciones puede declarar:
+
+```python
+from genio import (
+    MetricObjective,
+    MinMaxNormalizer,
+    NormalizationScope,
+    ObjectiveSet,
+    OptimizationDirection,
+    WeightedMeanScalarizer,
+)
+
+objective_set = ObjectiveSet(
+    objectives=(
+        MetricObjective(
+            "python_image_functional.mask_f1",
+            OptimizationDirection.MAXIMIZE,
+            name="quality",
+            normalization_bounds=(0.0, 1.0),
+        ),
+        MetricObjective(
+            "xheep_verilator_simulation.xheep_verilator.application_cycles",
+            OptimizationDirection.MINIMIZE,
+            name="cycles",
+            normalization_bounds=(0.0, 10_000_000.0),
+        ),
+    ),
+    normalizer=MinMaxNormalizer(NormalizationScope.FIXED),
+    scalarizer=WeightedMeanScalarizer({"quality": 0.7, "cycles": 0.3}),
+)
+```
+
+`ObjectiveRuntime` es interno y exclusivo de la sesion. Los valores objetivos se
+registran mediante `StatisticsCollector.on_evaluated_batch`; cada algoritmo conserva
+su propia semantica de `best_individuals()` y `ObjectiveSet` no analiza el historico.
 
 ## Diagnóstico
 

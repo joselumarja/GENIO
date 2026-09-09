@@ -1,3 +1,5 @@
+"""Artifact contracts used to exchange data between evaluation steps."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -13,7 +15,20 @@ class ArtifactError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Artifact(ABC):
-    """Base interface for artifacts produced and consumed by evaluators."""
+    """Base interface for data produced and consumed by evaluation steps.
+
+    Attributes:
+        name: Name local to the producing step. The executor exposes the artifact
+            under the qualified key ``step_id.name``.
+        producer: Identifier of the task or component that created the artifact.
+        individual_id: Candidate to which the artifact is currently bound.
+        objective: Optional application-defined objective association.
+        metadata: Provenance and backend-specific information.
+
+    Note:
+        Concrete artifacts are frozen dataclasses so that cache entries can clone
+        and rebind them with :func:`dataclasses.replace`.
+    """
 
     name: str
     producer: str
@@ -37,7 +52,23 @@ class Artifact(ABC):
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> "Artifact":
-        """Clone this artifact for another individual without moving its payload."""
+        """Clone this artifact for another individual without moving its payload.
+
+        Cache hits use this method to give a logically equivalent artifact to a
+        different individual. Referenced files and other payload locations remain
+        unchanged; only identity and metadata are rebound.
+
+        Args:
+            individual_id: Identifier that should own the cloned artifact.
+            metadata: Values merged over a deep copy of the original metadata.
+
+        Returns:
+            A deep-cloned artifact bound to ``individual_id``.
+
+        Raises:
+            ArtifactError: If the concrete dataclass cannot be replaced using the
+                base artifact fields.
+        """
 
         cloned = deepcopy(self)
         try:
@@ -57,11 +88,20 @@ class Artifact(ABC):
 
 @dataclass(frozen=True, slots=True)
 class MetricArtifact(Artifact, ABC):
-    """Artifact that exposes numeric metrics for result composition."""
+    """Artifact that exposes numeric metrics for result composition.
+
+    Metric names are local to the producing step. The executor prefixes each name
+    with ``step_id.`` and rejects booleans or non-real values before constructing
+    a :class:`genio.Result`.
+    """
 
     @abstractmethod
     def metrics(self) -> Mapping[str, float]:
-        """Return normalized numeric metrics exposed by this artifact."""
+        """Return numeric metrics exposed by this artifact.
+
+        Returns:
+            A mapping from step-local metric names to real numeric values.
+        """
 
 
 __all__ = ["Artifact", "ArtifactError", "MetricArtifact"]

@@ -176,6 +176,7 @@ class BaselineTask(EvaluationTask):
 class BaselineStep(EvaluationStep):
     id = "baseline"
     task_type = BaselineTask
+    produced_artifacts = {"metrics": ValuesMetricArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return BaselineTask(individual=individual, step_id=self.id)
@@ -199,6 +200,7 @@ class ConditionalStep(EvaluationStep):
     id = "quality"
     depends_on = ("baseline",)
     task_type = ConditionalTask
+    produced_artifacts = {"metrics": ValuesMetricArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return ConditionalTask(individual=individual, step_id=self.id)

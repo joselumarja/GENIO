@@ -1,3 +1,5 @@
+"""Backend interface for scheduling and controlling evaluation tasks."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -37,7 +39,18 @@ class UnknownEvaluationHandleError(BackendError):
 
 @dataclass(frozen=True, slots=True)
 class EvaluationHandle:
-    """Identify an evaluation submitted to a backend."""
+    """Identify one evaluation submitted to a specific backend.
+
+    Attributes:
+        id: Backend-generated handle identifier.
+        task_id: Optional identifier of the submitted evaluation task.
+        backend_id: Optional identity of the backend that owns the handle.
+        metadata: Scheduler-specific submission information.
+        payload: Private backend data required to collect or control execution.
+
+    Handles are opaque capabilities. They should only be passed back to the
+    backend instance that created them.
+    """
 
     id: str
     task_id: str | None = None
@@ -47,53 +60,99 @@ class EvaluationHandle:
 
 
 class Backend(ABC):
-    """Execution mechanism for evaluation tasks."""
+    """Schedule evaluation tasks and expose their lifecycle through handles.
+
+    A backend creates an :class:`genio.ExecutionContext` for each task and may run
+    synchronously, on local workers, or through a remote host. Consequently,
+    :meth:`submit` is not guaranteed to be non-blocking; callers should rely on
+    handles and lifecycle methods rather than a particular scheduling strategy.
+
+    Backends own resources independently from optimization sessions. They can be
+    used as context managers to guarantee :meth:`shutdown` is called.
+    """
 
     def checkpoint_signature(self) -> Mapping[str, Any]:
-        """Return execution configuration relevant to resumed task semantics."""
+        """Return execution configuration relevant to resumed task semantics.
+
+        Stateful or configurable backends should extend the base type identity
+        with every setting that could change evaluation results after restoration.
+        """
 
         return {"type": f"{type(self).__module__}.{type(self).__qualname__}"}
 
     @abstractmethod
     def submit(self, task: EvaluationTask) -> EvaluationHandle:
-        """Submit an evaluation task and return its handle."""
+        """Submit an evaluation task and return a backend-owned handle.
+
+        Implementations may finish the task before returning or schedule it
+        asynchronously.
+
+        Raises:
+            BackendShutdownError: If the backend no longer accepts work.
+        """
 
         raise NotImplementedError
 
     def submit_batch(self, tasks: Sequence[EvaluationTask]) -> list[EvaluationHandle]:
-        """Submit multiple evaluation tasks and return their handles."""
+        """Submit tasks in order and return their corresponding handles.
+
+        The default implementation repeatedly calls :meth:`submit`; it provides
+        no all-or-nothing guarantee if a later submission fails.
+        """
 
         return [self.submit(task) for task in tasks]
 
     @abstractmethod
     def collect(self, handle: EvaluationHandle) -> list[Artifact]:
-        """Wait for and return artifacts, re-raising task execution failures."""
+        """Wait for a submitted task and return its produced artifacts.
+
+        Raises:
+            UnknownEvaluationHandleError: If the handle is not owned by this
+                backend.
+            Exception: The original task failure may be re-raised after execution.
+        """
 
         raise NotImplementedError
 
     def collect_batch(self, handles: Sequence[EvaluationHandle]) -> list[list[Artifact]]:
-        """Collect multiple evaluations in handle order."""
+        """Collect multiple evaluations and preserve handle order.
+
+        The default implementation waits sequentially even when the tasks are
+        already executing concurrently.
+        """
 
         return [self.collect(handle) for handle in handles]
 
     @abstractmethod
     def status(self, handle: EvaluationHandle) -> EvaluationState:
-        """Return the current state of a submitted evaluation."""
+        """Return the current lifecycle state of a submitted evaluation."""
 
         raise NotImplementedError
 
     def error(self, handle: EvaluationHandle) -> str | None:
-        """Return the error reported for a submitted evaluation."""
+        """Return a task failure description when the backend provides one."""
 
         return None
 
     def cancel(self, handle: EvaluationHandle) -> bool:
-        """Request cancellation of an unfinished evaluation."""
+        """Request cancellation of an unfinished evaluation.
+
+        Returns:
+            Whether this call successfully initiated cancellation. Concrete
+            backends define what work can be interrupted.
+        """
 
         raise NotImplementedError
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
-        """Release backend resources and optionally cancel pending evaluations."""
+        """Release backend resources and optionally cancel pending evaluations.
+
+        Args:
+            wait: Wait for running work and worker resources to terminate.
+            cancel_futures: Request cancellation of work that has not started.
+
+        The base implementation has no resources to release.
+        """
 
     def __enter__(self) -> "Backend":
         """Return this backend as a managed resource."""

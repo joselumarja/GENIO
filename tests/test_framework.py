@@ -97,6 +97,7 @@ class ScoreTask(EvaluationTask):
 class ScoreStep(EvaluationStep):
     id = "score"
     task_type = ScoreTask
+    produced_artifacts = {"score": MetricsMemoryArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return ScoreTask(individual=individual, step_id=self.id)
@@ -109,6 +110,7 @@ class NamedStep(EvaluationStep):
         self.id = id
         self.depends_on = tuple(depends_on)
         self.required_artifacts = dict(required_artifacts or {})
+        self.produced_artifacts = {"output": MemoryArtifact}
 
     def create_task(self, individual: Individual, artifacts):
         return NamedTask(individual, self.id, tuple(sorted(artifacts)))
@@ -119,12 +121,12 @@ class OneShotAlgorithm(SearchAlgorithm):
         self._asked = False
         self._evaluations: list[Evaluation] = []
 
-    def ask(self, session: OptimizationSession):
+    def ask(self):
         self._asked = True
-        return [session.search_space.from_index(1, id="individual_001")]
+        return [self.context.search_space.from_index(1, id="individual_001")]
 
-    def tell(self, evaluations):
-        self._evaluations.extend(evaluations)
+    def tell(self, batch):
+        self._evaluations.extend(item.evaluation for item in batch)
 
     def should_stop(self) -> bool:
         return bool(self._evaluations)
@@ -136,9 +138,9 @@ class OneShotAlgorithm(SearchAlgorithm):
 
 
 class FirstIndividualAlgorithm(OneShotAlgorithm):
-    def ask(self, session: OptimizationSession):
+    def ask(self):
         self._asked = True
-        return [session.search_space.from_index(0, id="individual_001")]
+        return [self.context.search_space.from_index(0, id="individual_001")]
 
 
 class TwoBatchAlgorithm(SearchAlgorithm):
@@ -146,18 +148,18 @@ class TwoBatchAlgorithm(SearchAlgorithm):
         self._next_index = 0
         self._evaluations: list[Evaluation] = []
 
-    def ask(self, session: OptimizationSession):
+    def ask(self):
         if self._next_index >= 2:
             return []
-        individual = session.search_space.from_index(
+        individual = self.context.search_space.from_index(
             self._next_index,
             id=f"individual_{self._next_index}",
         )
         self._next_index += 1
         return [individual]
 
-    def tell(self, evaluations):
-        self._evaluations.extend(evaluations)
+    def tell(self, batch):
+        self._evaluations.extend(item.evaluation for item in batch)
 
     def should_stop(self) -> bool:
         return len(self._evaluations) >= 2
@@ -196,6 +198,34 @@ class RecordingStatistics(StatisticsCollector):
 
     def snapshot(self):
         return {"events": list(self.events)}
+
+
+class EmptyNonStoppingAlgorithm(SearchAlgorithm):
+    def ask(self):
+        return ()
+
+    def tell(self, batch):
+        raise AssertionError("tell must not be called for an empty proposal")
+
+    def should_stop(self):
+        return False
+
+
+class EmptyStoppingAlgorithm(EmptyNonStoppingAlgorithm):
+    def __init__(self) -> None:
+        self._stopped = False
+
+    def ask(self):
+        self._stopped = True
+        return ()
+
+    def should_stop(self):
+        return self._stopped
+
+
+class FailingTellAlgorithm(OneShotAlgorithm):
+    def tell(self, batch):
+        raise RuntimeError("planned tell failure")
 
 
 def test_individual_keeps_concrete_stage_choices():
@@ -362,6 +392,7 @@ def test_optimization_session_coordinates_search_backend_and_statistics():
     }
     assert result.evaluations[0].result.metrics == {"score.score": 0.0}
     assert result.best_individuals[0].id == "individual_001"
+    assert not hasattr(result, "evaluated_batches")
 
 
 def test_optimization_session_notifies_batch_statistics_hooks():
@@ -402,6 +433,109 @@ def test_optimization_session_notifies_batch_statistics_hooks():
     }
 
 
+def test_optimization_session_rejects_inconsistent_empty_ask_and_becomes_terminal():
+    search_space = SearchSpace.from_scenario(
+        SearchScenarioSpec(
+            id="empty_ask_space",
+            slots=(SlotSpec(index=0, alternatives=(StageChoice(slot=0, stage="nop"),)),),
+        )
+    )
+    session = OptimizationSession(
+        search_space=search_space,
+        algorithm=EmptyNonStoppingAlgorithm(),
+        backend=LocalBackend(),
+        evaluation_workflow=EvaluationWorkflow(()),
+    )
+
+    with pytest.raises(RuntimeError, match="empty batch"):
+        session.run()
+
+    assert session.failed
+    assert session._batch_in_progress is False
+    with pytest.raises(Exception, match="FAILED"):
+        session.run()
+    with pytest.raises(Exception, match="FAILED"):
+        session.save_checkpoint()
+
+
+def test_optimization_session_accepts_empty_ask_that_transitions_to_stopped():
+    search_space = SearchSpace.from_scenario(
+        SearchScenarioSpec(
+            id="consistent_empty_ask_space",
+            slots=(SlotSpec(index=0, alternatives=(StageChoice(slot=0, stage="nop"),)),),
+        )
+    )
+
+    result = OptimizationSession(
+        search_space=search_space,
+        algorithm=EmptyStoppingAlgorithm(),
+        backend=LocalBackend(),
+        evaluation_workflow=EvaluationWorkflow(()),
+    ).run()
+
+    assert result.evaluations == ()
+
+
+def test_optimization_session_is_terminal_after_post_ask_failure():
+    search_space = SearchSpace.from_scenario(
+        SearchScenarioSpec(
+            id="failed_session_space",
+            slots=(
+                SlotSpec(
+                    index=0,
+                    alternatives=(
+                        StageChoice(slot=0, stage="nop"),
+                        StageChoice(slot=0, stage="threshold"),
+                    ),
+                ),
+            ),
+        )
+    )
+    session = OptimizationSession(
+        search_space=search_space,
+        algorithm=FailingTellAlgorithm(),
+        backend=LocalBackend(),
+        evaluation_workflow=EvaluationWorkflow(()),
+    )
+
+    with pytest.raises(RuntimeError, match="planned tell failure"):
+        session.run()
+
+    assert session.failed
+    assert session._batch_in_progress is False
+    with pytest.raises(Exception, match="FAILED"):
+        session.run()
+
+
+def test_session_commits_history_before_post_tell_batch_hooks():
+    class FailingBatchStatistics(RecordingStatistics):
+        def on_batch_completed(self, batch_index, evaluations) -> None:
+            super().on_batch_completed(batch_index, evaluations)
+            raise RuntimeError("planned final hook failure")
+
+    search_space = SearchSpace.from_scenario(
+        SearchScenarioSpec(
+            id="hook_failure_space",
+            slots=(SlotSpec(index=0, alternatives=(StageChoice(slot=0, stage="nop"),)),),
+        )
+    )
+    session = OptimizationSession(
+        search_space=search_space,
+        algorithm=FirstIndividualAlgorithm(),
+        backend=LocalBackend(),
+        evaluation_workflow=EvaluationWorkflow(()),
+        statistics=FailingBatchStatistics(),
+    )
+
+    with pytest.raises(RuntimeError, match="planned final hook failure"):
+        session.run()
+
+    assert len(session._evaluations) == 1
+    assert len(session._evaluated_batches) == 1
+    assert session._next_batch_index == 1
+    assert session.failed
+
+
 def test_optimization_session_uses_evaluation_workflow_dependencies():
     search_space = SearchSpace.from_scenario(
         SearchScenarioSpec(
@@ -440,6 +574,7 @@ def test_evaluation_executor_passes_no_undeclared_dependency_artifacts():
         id = "consume"
         depends_on = ("compile",)
         task_type = NamedTask
+        produced_artifacts = {"output": MemoryArtifact}
 
         def create_task(self, individual, artifacts):
             received.clear()
@@ -505,6 +640,23 @@ def test_evaluation_workflow_rejects_non_artifact_requirement_type():
         )
 
 
+def test_evaluation_workflow_validates_produced_artifact_contract():
+    step = NamedStep("compile")
+    signature = EvaluationWorkflow((step,)).steps[0].checkpoint_signature()
+
+    assert signature["produced_artifacts"] == {
+        "output": f"{MemoryArtifact.__module__}.{MemoryArtifact.__qualname__}"
+    }
+
+    step.produced_artifacts = {"invalid.name": MemoryArtifact}
+    with pytest.raises(EvaluationWorkflowError, match="local strings"):
+        EvaluationWorkflow((step,))
+
+    step.produced_artifacts = {"output": object}
+    with pytest.raises(EvaluationWorkflowError, match="Artifact subclass"):
+        EvaluationWorkflow((step,))
+
+
 def test_evaluation_executor_filters_and_types_required_artifacts():
     received = {}
 
@@ -513,6 +665,7 @@ def test_evaluation_executor_filters_and_types_required_artifacts():
         depends_on = ("compile", "unrelated")
         required_artifacts = {"compile.output": MemoryArtifact}
         task_type = NamedTask
+        produced_artifacts = {"output": MemoryArtifact}
 
         def create_task(self, individual, artifacts):
             received.update(artifacts)
@@ -541,46 +694,75 @@ def test_evaluation_executor_filters_and_types_required_artifacts():
     }
 
 
-def test_evaluation_executor_rejects_missing_required_artifact():
-    workflow = EvaluationWorkflow(
-        (
-            NamedStep("compile"),
-            NamedStep(
-                "consume",
-                depends_on=("compile",),
-                required_artifacts={"compile.missing": MemoryArtifact},
-            ),
-        )
-    )
+def test_evaluation_executor_rejects_undeclared_artifact():
+    class UndeclaredStep(NamedStep):
+        def __init__(self) -> None:
+            super().__init__("undeclared")
+            self.produced_artifacts = {}
+
     individual = Individual.from_slots(
-        id="missing-artifact",
+        id="undeclared-artifact",
         scenario="workflow_contract",
         slots=[StageChoice(slot=0, stage="nop")],
     )
 
-    with pytest.raises(EvaluationExecutionError, match="was not produced"):
-        EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
+    with pytest.raises(EvaluationExecutionError, match="undeclared artifact"):
+        EvaluationExecutor(
+            EvaluationWorkflow((UndeclaredStep(),)), LocalBackend()
+        ).evaluate(individual)
 
 
-def test_evaluation_executor_rejects_wrong_required_artifact_type():
-    workflow = EvaluationWorkflow(
-        (
-            NamedStep("compile"),
-            NamedStep(
-                "consume",
-                depends_on=("compile",),
-                required_artifacts={"compile.output": MetricsMemoryArtifact},
-            ),
-        )
-    )
+def test_evaluation_executor_rejects_artifact_for_another_individual():
+    class WrongIndividualTask(EvaluationTask):
+        def run(self, context):
+            return [MemoryArtifact("output", 1, "other")]
+
+    class WrongIndividualStep(EvaluationStep):
+        id = "wrong_individual"
+        task_type = WrongIndividualTask
+        produced_artifacts = {"output": MemoryArtifact}
+
+        def create_task(self, individual, artifacts):
+            return WrongIndividualTask(individual=individual, step_id=self.id)
+
     individual = Individual.from_slots(
-        id="wrong-artifact-type",
+        id="requested",
         scenario="workflow_contract",
         slots=[StageChoice(slot=0, stage="nop")],
     )
 
-    with pytest.raises(EvaluationExecutionError, match="MetricsMemoryArtifact"):
-        EvaluationExecutor(workflow, LocalBackend()).evaluate(individual)
+    with pytest.raises(EvaluationExecutionError, match="different individual"):
+        EvaluationExecutor(
+            EvaluationWorkflow((WrongIndividualStep(),)), LocalBackend()
+        ).evaluate(individual)
+
+
+def test_evaluation_workflow_rejects_undeclared_required_artifact():
+    with pytest.raises(EvaluationWorkflowError, match="does not declare"):
+        EvaluationWorkflow(
+            (
+                NamedStep("compile"),
+                NamedStep(
+                    "consume",
+                    depends_on=("compile",),
+                    required_artifacts={"compile.missing": MemoryArtifact},
+                ),
+            )
+        )
+
+
+def test_evaluation_workflow_rejects_incompatible_required_artifact_type():
+    with pytest.raises(EvaluationWorkflowError, match="declares MemoryArtifact"):
+        EvaluationWorkflow(
+            (
+                NamedStep("compile"),
+                NamedStep(
+                    "consume",
+                    depends_on=("compile",),
+                    required_artifacts={"compile.output": MetricsMemoryArtifact},
+                ),
+            )
+        )
 
 
 def test_local_backend_uses_configured_base_work_dir(tmp_path):
@@ -837,6 +1019,7 @@ def test_evaluation_executor_accumulates_metric_artifacts():
     class QualityStep(EvaluationStep):
         id = "quality"
         task_type = QualityTask
+        produced_artifacts = {"quality": MetricsMemoryArtifact}
 
         def create_task(self, individual: Individual, artifacts):
             return QualityTask(individual=individual, step_id=self.id)
@@ -872,6 +1055,7 @@ def test_evaluation_executor_rejects_duplicate_artifact_keys():
     class DuplicateArtifactStep(EvaluationStep):
         id = "duplicate"
         task_type = DuplicateArtifactTask
+        produced_artifacts = {"output": MemoryArtifact}
 
         def create_task(self, individual: Individual, artifacts):
             return DuplicateArtifactTask(individual=individual, step_id=self.id)
@@ -907,6 +1091,10 @@ def test_evaluation_executor_rejects_duplicate_metric_keys():
     class DuplicateMetricStep(EvaluationStep):
         id = "quality"
         task_type = DuplicateMetricTask
+        produced_artifacts = {
+            "quality_a": MetricsMemoryArtifact,
+            "quality_b": MetricsMemoryArtifact,
+        }
 
         def create_task(self, individual: Individual, artifacts):
             return DuplicateMetricTask(individual=individual, step_id=self.id)
@@ -941,6 +1129,7 @@ def test_evaluation_executor_rejects_non_numeric_metrics():
     class InvalidMetricStep(EvaluationStep):
         id = "quality"
         task_type = InvalidMetricTask
+        produced_artifacts = {"quality": MetricsMemoryArtifact}
 
         def create_task(self, individual: Individual, artifacts):
             return InvalidMetricTask(individual=individual, step_id=self.id)

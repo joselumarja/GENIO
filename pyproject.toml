@@ -15,6 +15,9 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+genio = ["py.typed"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
@@ -23,3 +26,9 @@ markers = [
     "hls_integration: requires a local Vitis HLS installation",
     "slow: long-running integration test",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/genio"]
+check_untyped_defs = true
+ignore_missing_imports = true

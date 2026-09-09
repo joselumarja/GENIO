@@ -12,12 +12,19 @@ HLS_SYNTHESIS_ORIGIN = "hls_synthesis"
 
 
 class HLSReportParseError(RuntimeError):
-    """Raised when Vitis HLS reports cannot be located or parsed."""
+    """Indicate that required Vitis HLS report artifacts cannot be located."""
 
 
 @dataclass(frozen=True, slots=True)
 class ParsedHLSReport:
-    """Parsed metrics and source report paths for one HLS report origin."""
+    """Carry normalized metrics and provenance for one HLS report origin.
+
+    Attributes:
+        origin: Stable identifier for the HLS stage that generated the report.
+        report_paths: Existing summary, text, and XML report paths discovered.
+        metrics: Normalized timing, latency, throughput, and resource values.
+        metadata: Tool, part, top-function, flow, and source-report information.
+    """
 
     origin: str
     report_paths: tuple[Path, ...]
@@ -30,7 +37,24 @@ def parse_hls_synthesis_report(
     *,
     top_function: str | None = None,
 ) -> ParsedHLSReport:
-    """Parse Vitis HLS synthesis reports produced by `v++ --compile --mode hls`."""
+    """Parse reports produced by ``v++ --compile --mode hls``.
+
+    Metrics are read from the selected ``csynth.xml`` and normalized to floats.
+    Discovered report paths also include files referenced by
+    ``*.hlscompile_summary`` and conventional report locations. Missing XML fields
+    and values represented by ``-`` are omitted rather than treated as zero.
+
+    Args:
+        work_dir: Vitis HLS work directory containing synthesis output.
+        top_function: Optional preferred ``<top>_csynth.xml`` report basename.
+
+    Returns:
+        Parsed metrics, metadata, and all existing source report paths.
+
+    Raises:
+        HLSReportParseError: If no csynth XML report can be located.
+        xml.etree.ElementTree.ParseError: If the selected XML is malformed.
+    """
 
     report_paths = _discover_hls_synthesis_report_paths(work_dir)
     xml_report_path = _select_csynth_xml_report(work_dir, top_function=top_function)
@@ -56,6 +80,8 @@ def parse_hls_synthesis_report(
 
 
 def _discover_hls_synthesis_report_paths(work_dir: Path) -> tuple[Path, ...]:
+    """Collect existing synthesis reports from summary and conventional paths."""
+
     paths: list[Path] = []
     paths.extend(_summary_report_paths(work_dir, report_type="HLS_SYNTHESIS"))
     paths.extend(work_dir.glob("hls/syn/report/csynth.*"))
@@ -65,6 +91,12 @@ def _discover_hls_synthesis_report_paths(work_dir: Path) -> tuple[Path, ...]:
 
 
 def _summary_report_paths(work_dir: Path, *, report_type: str) -> tuple[Path, ...]:
+    """Extract report paths of one type from Vitis HLS compile summaries.
+
+    Summary files are treated as Vitis-generated JSON-like text because report
+    blocks are extracted independently rather than decoding the whole document.
+    """
+
     paths: list[Path] = []
     for summary_path in work_dir.glob("*.hlscompile_summary"):
         content = summary_path.read_text(encoding="utf-8")
@@ -92,6 +124,8 @@ def _json_string_value(content: str, key: str) -> str | None:
 
 
 def _select_csynth_xml_report(work_dir: Path, *, top_function: str | None) -> Path | None:
+    """Select the preferred top-specific, canonical, or first csynth XML report."""
+
     report_dir = work_dir / "hls" / "syn" / "report"
     candidates: list[Path] = []
     if top_function:
@@ -106,6 +140,8 @@ def _select_csynth_xml_report(work_dir: Path, *, top_function: str | None) -> Pa
 
 
 def _parse_csynth_metadata(root: ET.Element) -> dict[str, Any]:
+    """Extract available tool, target, top-function, and flow metadata."""
+
     return {
         key: value
         for key, value in {
@@ -120,6 +156,12 @@ def _parse_csynth_metadata(root: ET.Element) -> dict[str, Any]:
 
 
 def _parse_csynth_metrics(root: ET.Element) -> dict[str, float]:
+    """Normalize csynth timing, latency, throughput, and resource estimates.
+
+    Both ``bram``/``available_bram`` and explicit ``bram_18k`` aliases are
+    emitted for compatibility with consumers naming the physical Vitis resource.
+    """
+
     metrics: dict[str, float] = {}
     _add_metric(metrics, "target_clock_period_ns", root, "UserAssignments/TargetClockPeriod")
     _add_metric(metrics, "clock_uncertainty_ns", root, "UserAssignments/ClockUncertainty")
@@ -201,6 +243,8 @@ def _text(root: ET.Element, path: str) -> str | None:
 
 
 def _float_text(root: ET.Element, path: str) -> float | None:
+    """Extract the first numeric token from an XML field, omitting ``-`` values."""
+
     value = _text(root, path)
     if value is None or value == "-":
         return None
@@ -211,6 +255,8 @@ def _float_text(root: ET.Element, path: str) -> float | None:
 
 
 def _deduplicate_existing_paths(paths: list[Path]) -> tuple[Path, ...]:
+    """Keep existing paths once while preserving their first-seen order."""
+
     existing_paths: dict[Path, None] = {}
     for path in paths:
         if path.exists():

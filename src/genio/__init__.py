@@ -1,9 +1,23 @@
+"""Public API for building and running GENIO optimization searches.
+
+GENIO separates candidate generation, evaluation, execution, and observation.
+A typical application creates a :class:`SearchSpace`, selects a
+:class:`SearchAlgorithm`, combines one or more :class:`EvaluationStep` objects
+in an :class:`EvaluationWorkflow`, and passes those components to an
+:class:`OptimizationSession`.
+
+The names re-exported here form the supported convenience API. Subpackages can
+still be imported directly when implementing custom algorithms, evaluators,
+backends, composers, artifacts, or statistics collectors.
+"""
+
 from genio.algorithm import (
     GeneticSearch,
     GridSearch,
     NSGA2Search,
     RandomSearch,
     SearchAlgorithm,
+    SearchContext,
 )
 from genio.artifacts import (
     Artifact,
@@ -82,12 +96,15 @@ from genio.evaluation import (
     XHeepVerilatorSimulationTimeoutError,
 )
 from genio.objective import (
+    IdentityScalarizer,
     MetricObjective,
+    MinMaxNormalizer,
+    NormalizationScope,
     Objective,
     ObjectiveError,
     ObjectiveSet,
     OptimizationDirection,
-    dominates,
+    WeightedMeanScalarizer,
 )
 from genio.search_space import SearchScenarioSpec, SearchSpace, SlotSpec
 from genio.session import OptimizationSession
@@ -137,6 +154,7 @@ __all__ = [
     "HLSImagePipelineComposer",
     "ImageFunctionalQualityError",
     "ImageFunctionalMetricsArtifact",
+    "IdentityScalarizer",
     "InMemoryStatistics",
     "Individual",
     "JSONCheckpointStore",
@@ -144,7 +162,9 @@ __all__ = [
     "LFUArtifactCache",
     "MetricArtifact",
     "MetricObjective",
+    "MinMaxNormalizer",
     "NSGA2Search",
+    "NormalizationScope",
     "Objective",
     "ObjectiveError",
     "ObjectiveSet",
@@ -161,6 +181,7 @@ __all__ = [
     "ResultStatus",
     "RandomSearch",
     "SearchAlgorithm",
+    "SearchContext",
     "SearchScenarioSpec",
     "SearchSpace",
     "SearchResult",
@@ -177,5 +198,5 @@ __all__ = [
     "XHeepVerilatorSimulationResultError",
     "XHeepVerilatorSimulationTask",
     "XHeepVerilatorSimulationTimeoutError",
-    "dominates",
+    "WeightedMeanScalarizer",
 ]

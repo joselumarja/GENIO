@@ -1,3 +1,5 @@
+"""Durable JSON checkpoint snapshots, manifests, checksums, and lineage locks."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,16 +17,29 @@ from .policy import CheckpointPolicy
 
 
 class JSONCheckpointStore:
-    """Persist versioned checkpoint snapshots as atomically replaced JSON files."""
+    """Persist session checkpoint snapshots as atomically replaced JSON files.
+
+    A save writes an immutable numbered snapshot and then atomically replaces
+    ``latest.json`` with a checksummed reference to it. Directory locks serialize
+    individual file operations, while the longer-lived session lease prevents two
+    optimization sessions from advancing the same checkpoint lineage.
+
+    The durability and locking implementation relies on POSIX ``fsync``, atomic
+    rename semantics, file permissions, and ``fcntl`` advisory locks.
+    """
 
     FORMAT = "genio.optimization-checkpoint"
     LATEST_FORMAT = "genio.optimization-checkpoint.latest"
-    SCHEMA_VERSION = 1
     _SNAPSHOT_NAME = re.compile(
         r"^checkpoint-[0-9]{6,}-(?:running|completed)-[0-9a-f]{32}\.json$"
     )
 
     def __init__(self, policy: CheckpointPolicy) -> None:
+        """Create a store governed by one checkpoint policy.
+
+        Filesystem directories and locks are created lazily by save, load, or
+        lease operations.
+        """
         self.policy = policy
         self._lease_descriptor: int | None = None
 
@@ -46,14 +61,32 @@ class JSONCheckpointStore:
         return completed_batches % self.policy.every_batches == 0
 
     def save(self, payload: dict[str, Any], *, sequence: int) -> Path:
-        """Atomically persist one snapshot and update the latest manifest."""
+        """Atomically persist one snapshot and update the latest manifest.
+
+        Args:
+            payload: JSON-compatible session state with status ``running`` or
+                ``completed``.
+            sequence: Completed-batch sequence embedded in the snapshot filename.
+
+        Returns:
+            Path of the immutable numbered snapshot.
+
+        Raises:
+            CheckpointFormatError: If the payload status is invalid.
+            TypeError: If canonical fingerprinting encounters a non-JSON value.
+            ValueError: If canonical fingerprinting encounters a non-finite number.
+            OSError: If snapshot, manifest, permission, or lock operations fail.
+
+        Note:
+            This method serializes writes but does not require the caller to hold
+            the longer-lived session lease.
+        """
 
         status = str(payload.get("status"))
         if status not in {"running", "completed"}:
             raise CheckpointFormatError("Checkpoint payload has an invalid status.")
         snapshot_without_checksum = {
             "format": self.FORMAT,
-            "schema_version": self.SCHEMA_VERSION,
             "saved_at": datetime.now(timezone.utc).isoformat(),
             **payload,
         }
@@ -69,7 +102,6 @@ class JSONCheckpointStore:
 
         latest = {
             "format": self.LATEST_FORMAT,
-            "schema_version": self.SCHEMA_VERSION,
             "checkpoint": snapshot_path.name,
             "sha256": checksum,
         }
@@ -80,7 +112,19 @@ class JSONCheckpointStore:
         return snapshot_path
 
     def load(self, path: str | Path | None = None) -> dict[str, Any]:
-        """Load and validate a numbered snapshot or latest manifest."""
+        """Load and validate a numbered snapshot or latest manifest.
+
+        Args:
+            path: Snapshot or manifest path. Defaults to this store's
+                ``latest.json``.
+
+        Returns:
+            Decoded snapshot including framework metadata and content checksum.
+
+        Raises:
+            CheckpointFormatError: If files are missing, malformed, unsupported,
+                or fail manifest or content checksum validation.
+        """
 
         requested = Path(path) if path is not None else self.latest_path
         if not requested.exists():
@@ -88,8 +132,6 @@ class JSONCheckpointStore:
         with self._directory_lock():
             value = self._read_json(requested)
             if value.get("format") == self.LATEST_FORMAT:
-                if value.get("schema_version") != self.SCHEMA_VERSION:
-                    raise CheckpointFormatError("Unsupported latest checkpoint schema version.")
                 try:
                     snapshot_name = str(value["checkpoint"])
                     expected_checksum = str(value["sha256"])
@@ -111,8 +153,6 @@ class JSONCheckpointStore:
 
         if value.get("format") != self.FORMAT:
             raise CheckpointFormatError("Unknown checkpoint format.")
-        if value.get("schema_version") != self.SCHEMA_VERSION:
-            raise CheckpointFormatError("Unsupported checkpoint schema version.")
         try:
             expected_content_checksum = str(value["content_sha256"])
         except KeyError as exc:
@@ -124,7 +164,11 @@ class JSONCheckpointStore:
         return value
 
     def acquire_session_lease(self) -> None:
-        """Acquire exclusive ownership of this checkpoint lineage for one session."""
+        """Acquire non-blocking exclusive ownership of a checkpoint lineage.
+
+        Repeated calls from the owning store are idempotent. A different process
+        or store already holding the lock causes :class:`CheckpointFormatError`.
+        """
 
         if self._lease_descriptor is not None:
             return
@@ -203,6 +247,7 @@ class JSONCheckpointStore:
             raise CheckpointFormatError(f"Cannot read checkpoint {path}: {exc}.") from exc
 
     def _write_atomic(self, path: Path, value: bytes) -> None:
+        """Durably replace a file using a private temporary and directory fsync."""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.parent.chmod(0o700)
         temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
@@ -226,6 +271,7 @@ class JSONCheckpointStore:
             temporary_path.unlink(missing_ok=True)
 
     def _prune(self, latest_snapshot: Path) -> None:
+        """Remove oldest numbered snapshots beyond the configured retention."""
         snapshots = sorted(
             (
                 path
@@ -241,6 +287,7 @@ class JSONCheckpointStore:
 
     @contextmanager
     def _directory_lock(self):
+        """Serialize one checkpoint-directory operation with a POSIX file lock."""
         self.policy.directory.mkdir(parents=True, exist_ok=True)
         self.policy.directory.chmod(0o700)
         lock_path = self.policy.directory / ".checkpoint.lock"

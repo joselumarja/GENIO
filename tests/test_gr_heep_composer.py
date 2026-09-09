@@ -16,6 +16,8 @@ from genio import (
 ROOT = Path(__file__).resolve().parents[1]
 DEFINITIONS_PATH = ROOT / "search_space/stages/definitions"
 TEMPLATES_PATH = ROOT / "gr_heep_templates"
+DEFAULT_APPLICATION_NAME = "genio_trans_mem_mem"
+DEFAULT_APPLICATION_ROOT = f"sw/applications/{DEFAULT_APPLICATION_NAME}"
 
 
 def make_individual() -> Individual:
@@ -37,9 +39,11 @@ def make_individual() -> Individual:
 
 
 def make_composer(**kwargs) -> GRHeepConfigurationComposer:
+    application_name = kwargs.pop("application_name", DEFAULT_APPLICATION_NAME)
     return GRHeepConfigurationComposer(
         DEFINITIONS_PATH,
         templates_path=TEMPLATES_PATH,
+        application_name=application_name,
         **kwargs,
     )
 
@@ -57,13 +61,10 @@ def test_gr_heep_composer_renders_configuration_and_application_overlay() -> Non
     assert package.entrypoint == "config/mcu-gen-config.py"
     assert set(package.files) == {
         "config/mcu-gen-config.py",
-        "sw/applications/genio_target/genio_app_config.h",
-        "sw/applications/genio_target/genio_perf.h",
-        "sw/applications/genio_target/main.c",
-        "sw/applications/genio_target/main.h",
-        "sw/applications/genio_target/safa.c",
-        "sw/applications/genio_target/safa.h",
-        "sw/applications/genio_target/safa_regs.h",
+        f"{DEFAULT_APPLICATION_ROOT}/genio_app_config.h",
+        f"{DEFAULT_APPLICATION_ROOT}/genio_perf.h",
+        f"{DEFAULT_APPLICATION_ROOT}/main.c",
+        f"{DEFAULT_APPLICATION_ROOT}/main.h",
     }
     config = package.files["config/mcu-gen-config.py"]
     assert "XHeep(BusType.onetoM)" in config
@@ -72,27 +73,56 @@ def test_gr_heep_composer_renders_configuration_and_application_overlay() -> Non
     assert "memory_ss.add_ram_banks([32] * 6)" in config
     assert "@" not in config
     assert "GENIO_PERF_BEGIN(application)" in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert "genio_perf_init();" in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert "dma_launch(&accelerator_transaction)" in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert "dma_launch(&traffic_transaction)" in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert '#include "gr_heep.h"' in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert "SAFA_PERIPH_START_ADDRESS" in package.files[
-        "sw/applications/genio_target/main.c"
+        f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
-    assert "image_input" in package.files["sw/applications/genio_target/main.h"]
+    assert "image_input" in package.files[f"{DEFAULT_APPLICATION_ROOT}/main.h"]
     assert package.metadata["system_design"]["unbound_example"] == "ignored"
     assert package.metadata["unbound_system_parameters"] == ["unbound_example"]
     assert "UNBOUND_EXAMPLE" not in package.metadata["rendered_configuration"]
+
+
+def test_gr_heep_composer_renders_mem_to_flash_application_overlay() -> None:
+    package = make_composer(
+        application_name="genio_trans_mem_flash",
+        application_defaults={"FLASH_OUTPUT_OFFSET": "0x00900000"},
+    ).compose(make_individual())
+
+    application_root = "sw/applications/genio_trans_mem_flash"
+    assert {
+        f"{application_root}/genio_app_config.h",
+        f"{application_root}/genio_perf.h",
+        f"{application_root}/main.c",
+        f"{application_root}/main.h",
+    }.issubset(package.files)
+    assert "#define GENIO_FLASH_OUTPUT_OFFSET 0x00900000" in package.files[
+        f"{application_root}/genio_app_config.h"
+    ]
+    assert "accelerator_source.ptr = (uint8_t *)image_input" in package.files[
+        f"{application_root}/main.c"
+    ]
+    assert "accelerator_destination.ptr = (uint8_t *)image_output" in package.files[
+        f"{application_root}/main.c"
+    ]
+    assert "w25q128jw_erase_and_write_standard" in package.files[
+        f"{application_root}/main.c"
+    ]
+    assert "@" not in package.files[f"{application_root}/genio_app_config.h"]
+    assert "@" not in package.files[f"{application_root}/main.c"]
 
 
 def test_gr_heep_composer_defaults_match_current_gen_heep_configuration() -> None:
@@ -334,7 +364,7 @@ def test_gr_heep_package_materializes_validated_overlay(tmp_path) -> None:
     package.materialize(tmp_path)
 
     assert (tmp_path / "config/mcu-gen-config.py").is_file()
-    assert (tmp_path / "sw/applications/genio_target/main.c").is_file()
+    assert (tmp_path / DEFAULT_APPLICATION_ROOT / "main.c").is_file()
     metadata = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["package_type"] == "gr_heep_overlay"
 
@@ -469,7 +499,7 @@ def test_gr_heep_composer_renders_complete_hls_artifact_overlay(tmp_path) -> Non
     assert "safa_accelerator i_hls_top" in overlay[
         "hw/vendor/safa/rtl/safa_wrapper.sv"
     ]
-    app_config = overlay["sw/applications/genio_target/genio_app_config.h"]
+    app_config = overlay[f"{DEFAULT_APPLICATION_ROOT}/genio_app_config.h"]
     assert "#define GENIO_INPUT_WORDS 1728" in app_config
     assert "#define GENIO_OUTPUT_WORDS 576" in app_config
 
@@ -505,7 +535,7 @@ def test_gr_heep_composer_embeds_dataset_image_in_main_header(tmp_path) -> None:
         image_path=image_path,
     )
 
-    header = overlay["sw/applications/genio_target/main.h"]
+    header = overlay[f"{DEFAULT_APPLICATION_ROOT}/main.h"]
     assert "0x04030201u, 0x00000605u," in header
     assert "@IMAGE_WORDS@" not in header
 

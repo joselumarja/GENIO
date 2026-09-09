@@ -1,3 +1,5 @@
+"""Reproducible CSV and JSON statistics persisted throughout a search run."""
+
 from __future__ import annotations
 
 import csv
@@ -18,13 +20,22 @@ from genio.core.search_result import SearchResult
 from genio.statistics.base import StatisticsCollector
 
 if TYPE_CHECKING:
+    from genio.cache.base import ArtifactCache
+    from genio.objective.runtime import EvaluatedBatch
     from genio.session.optimization import OptimizationSession
 
 
 class CSVStatisticsCollector(StatisticsCollector):
-    """Persist one CSV row per proposed individual and run-level summaries."""
+    """Persist one CSV row per proposal and run-level JSON summaries.
 
-    SCHEMA_VERSION = 2
+    Rows represent proposal occurrences rather than unique individuals or
+    genotypes. They are first written with a ``not_evaluated`` state before the
+    backend runs, then atomically rewritten after the completed batch is reported.
+    Dynamic columns flatten pipeline design, algorithm metadata, cache telemetry,
+    and metrics.
+    """
+
+    SCHEMA_VERSION = 3
     supports_checkpointing = True
     _BASE_COLUMNS = (
         "schema_version",
@@ -50,6 +61,10 @@ class CSVStatisticsCollector(StatisticsCollector):
         "algorithm_metadata_json",
         "algorithm_name",
         "evaluation_status",
+        "objective_status",
+        "objective_error",
+        "aggregate_score",
+        "normalization_version",
         "partial_metrics",
         "cache_hit",
         "cache_json",
@@ -64,6 +79,16 @@ class CSVStatisticsCollector(StatisticsCollector):
         *,
         individuals_filename: str = "individuals.csv",
     ) -> None:
+        """Configure the directory and filename used for run statistics.
+
+        Args:
+            output_dir: Directory for the CSV file, run manifest, and final summary.
+            individuals_filename: Filename for per-proposal rows.
+
+        No files are created during construction. The run manifest is written when
+        the session starts, the CSV when proposals arrive, and the summary when the
+        session completes.
+        """
         self.output_dir = Path(output_dir)
         self.individuals_path = self.output_dir / individuals_filename
         self.run_manifest_path = self.output_dir / "run_manifest.json"
@@ -78,7 +103,7 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._started_monotonic: float | None = None
         self._completed_batches = 0
         self._completed_evaluations = 0
-        self._artifact_cache = None
+        self._artifact_cache: ArtifactCache | None = None
 
     def on_session_started(self, session: OptimizationSession) -> None:
         """Initialize output files and write the reproducibility manifest."""
@@ -104,6 +129,11 @@ class CSVStatisticsCollector(StatisticsCollector):
                 "scenario_id": session.search_space.scenario_id,
                 "search_space_size": session.search_space.search_space_size,
                 "algorithm": self._algorithm_name,
+                "objective_set": (
+                    session.objective_set.checkpoint_signature()
+                    if session.objective_set is not None
+                    else None
+                ),
                 "backend": self._qualified_name(session.backend),
                 "backend_run_id": getattr(session.backend, "run_id", None),
                 "artifact_cache": (
@@ -188,6 +218,44 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._completed_batches += 1
         self._write_csv()
 
+    def on_evaluated_batch(self, batch: EvaluatedBatch) -> None:
+        """Merge objective representations into their proposal rows."""
+
+        normalization_version = (
+            batch.normalization_state.version
+            if batch.normalization_state is not None
+            else None
+        )
+        for item in batch.items:
+            proposal_id = str(item.evaluation.metadata["proposal_id"])
+            try:
+                row = self._rows[proposal_id]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Objective values reference unknown proposal {proposal_id!r}."
+                ) from exc
+            row["objective_status"] = item.status.value
+            row["objective_error"] = item.error or ""
+            row["normalization_version"] = normalization_version
+            values = item.objective_values
+            if values is None:
+                row["aggregate_score"] = None
+                continue
+            row["aggregate_score"] = values.aggregate_score
+            for index, name in enumerate(values.names):
+                prefix = f"objective.{name}"
+                row[f"{prefix}.raw"] = values.raw[index]
+                row[f"{prefix}.minimize"] = values.minimize[index]
+                row[f"{prefix}.maximize"] = values.maximize[index]
+                if values.normalized_minimize is not None:
+                    row[f"{prefix}.normalized_minimize"] = (
+                        values.normalized_minimize[index]
+                    )
+                if values.normalized_maximize is not None:
+                    row[f"{prefix}.normalized_maximize"] = (
+                        values.normalized_maximize[index]
+                    )
+
     def on_session_completed(self, result: SearchResult) -> None:
         """Finalize the CSV and write aggregate run statistics."""
 
@@ -222,6 +290,7 @@ class CSVStatisticsCollector(StatisticsCollector):
                     individual.id for individual in result.best_individuals
                 ],
                 "metric_summary": self._metric_summary(),
+                "objective_summary": self._objective_summary(),
                 "cache": (
                     self._artifact_cache.snapshot()
                     if self._artifact_cache is not None
@@ -287,6 +356,7 @@ class CSVStatisticsCollector(StatisticsCollector):
         *,
         session: OptimizationSession,
         evaluations: Sequence[Evaluation],
+        evaluated_batches: Sequence[EvaluatedBatch],
         completed: bool,
     ) -> None:
         """Restore authoritative CSV rows and discard uncommitted on-disk rows."""
@@ -388,6 +458,10 @@ class CSVStatisticsCollector(StatisticsCollector):
             "algorithm_metadata_json": self._canonical_json(algorithm_metadata),
             "algorithm_name": self._algorithm_name,
             "evaluation_status": "not_evaluated",
+            "objective_status": "not_evaluated",
+            "objective_error": "",
+            "aggregate_score": None,
+            "normalization_version": None,
             "partial_metrics": False,
             "cache_hit": False,
             "cache_json": self._canonical_json({}),
@@ -454,6 +528,42 @@ class CSVStatisticsCollector(StatisticsCollector):
             }
             for metric, values in sorted(values_by_metric.items())
         }
+
+    def _objective_summary(self) -> dict[str, dict[str, float | int]]:
+        values_by_objective: dict[str, list[float]] = {}
+        scores: list[float] = []
+        for row in self._ordered_rows():
+            if row.get("objective_status") != "valid":
+                continue
+            score = row.get("aggregate_score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                scores.append(float(score))
+            for key, value in row.items():
+                if (
+                    key.startswith("objective.")
+                    and key.endswith(".raw")
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                ):
+                    name = key.removeprefix("objective.").removesuffix(".raw")
+                    values_by_objective.setdefault(name, []).append(float(value))
+        summary = {
+            name: {
+                "count": len(values),
+                "min": min(values),
+                "max": max(values),
+                "mean": sum(values) / len(values),
+            }
+            for name, values in sorted(values_by_objective.items())
+        }
+        if scores:
+            summary["aggregate_score"] = {
+                "count": len(scores),
+                "min": min(scores),
+                "max": max(scores),
+                "mean": sum(scores) / len(scores),
+            }
+        return summary
 
     def _ordered_rows(self) -> list[dict[str, Any]]:
         return [self._rows[proposal_id] for proposal_id in self._proposal_order]

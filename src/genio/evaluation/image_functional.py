@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +16,14 @@ from genio.evaluation.task import EvaluationTask, ExecutionContext
 
 @dataclass(frozen=True, slots=True)
 class _ImageFunctionalSample:
+    """Describe one input image and its optional ground-truth image.
+
+    Attributes:
+        id: Stable sample identifier derived from the input filename stem.
+        image_path: Path to the image passed to the composed pipeline.
+        reference_path: Path to the matching reference image, when available.
+    """
+
     id: str
     image_path: Path
     reference_path: Path | None = None
@@ -23,6 +31,15 @@ class _ImageFunctionalSample:
 
 @dataclass(frozen=True, slots=True)
 class _ImageFunctionalExecution:
+    """Record the observable result of executing one image sample.
+
+    Attributes:
+        sample: Dataset sample that was executed.
+        output_path: Persisted PNG output, or ``None`` when execution failed.
+        elapsed_seconds: Wall-clock pipeline time measured for the sample.
+        error: String representation of the caught exception, if any.
+    """
+
     sample: _ImageFunctionalSample
     output_path: Path | None
     elapsed_seconds: float
@@ -31,6 +48,15 @@ class _ImageFunctionalExecution:
 
 @dataclass(frozen=True, slots=True)
 class _BoundingBox:
+    """Represent an axis-aligned component box with exclusive maxima.
+
+    Attributes:
+        x_min: Inclusive horizontal origin.
+        y_min: Inclusive vertical origin.
+        x_max: Exclusive horizontal limit.
+        y_max: Exclusive vertical limit.
+    """
+
     x_min: int
     y_min: int
     x_max: int
@@ -38,12 +64,34 @@ class _BoundingBox:
 
 
 class ImageFunctionalQualityError(RuntimeError):
-    """Raised when a critical functional metric reports no useful quality."""
+    """Indicate that at least one critical quality metric is exactly zero.
+
+    This error distinguishes a successfully executed image pipeline with unusable
+    functional quality from configuration, loading, and per-sample failures.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class PythonImageFunctionalTask(EvaluationTask):
-    """Task that will execute a composed Python image-processing pipeline."""
+    """Execute and score a composed Python image-processing pipeline.
+
+    The composer must produce a :class:`PythonExecutionPackage` whose entrypoint
+    uses ``module_path:function_name`` syntax. The function receives an image as
+    loaded by OpenCV and returns an OpenCV-compatible image, which is persisted
+    as PNG. Reference images are matched first by exact filename and then by
+    filename stem.
+
+    Requested mask metrics operate on foreground pixels obtained by treating any
+    nonzero channel as foreground. Instance metrics use 8-connected components
+    and greedy one-to-one bounding-box matches at an IoU threshold of 0.5.
+
+    Attributes:
+        composer: Composer used to materialize the executable Python package.
+        images_path: Directory containing the input image dataset.
+        references_path: Optional directory containing ground-truth images.
+        metrics: Ordered names of mask or instance metrics to calculate.
+        metadata: Additional task metadata, including upstream artifact names.
+    """
 
     _SUPPORTED_IMAGE_SUFFIXES = frozenset({".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"})
     _MASK_METRICS = frozenset(
@@ -92,7 +140,29 @@ class PythonImageFunctionalTask(EvaluationTask):
         return {"pipeline": self._pipeline_cache_inputs()}
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
-        """Execute the composed Python pipeline and return its functional metrics."""
+        """Execute the composed pipeline over the configured image dataset.
+
+        The package directory receives package and dataset metadata. Per-sample
+        PNG outputs are written below the task artifact directory, and an
+        ``execution_manifest.json`` is persisted before aggregate failures are
+        raised. Successful execution returns one functional-metrics artifact with
+        aggregate and per-sample values.
+
+        Args:
+            context: Execution services used to resolve paths and write artifacts.
+
+        Returns:
+            A single :class:`ImageFunctionalMetricsArtifact` in a list.
+
+        Raises:
+            ValueError: If dataset paths or requested metrics are invalid.
+            TypeError: If the composer returns a non-Python execution package.
+            RuntimeError: If no entrypoint loader is available, the named object is
+                not callable, or any sample fails.
+            ImageFunctionalQualityError: If a critical requested metric is zero.
+            Exception: Exceptions raised while importing the composed module
+                propagate unchanged.
+        """
 
         images_path = self._validate_configuration(context)
         package, package_dir = self._compose_and_materialize(context)
@@ -113,6 +183,18 @@ class PythonImageFunctionalTask(EvaluationTask):
         self,
         context: ExecutionContext,
     ) -> tuple[PythonExecutionPackage, Path]:
+        """Compose the candidate and persist its executable package metadata.
+
+        Args:
+            context: Execution context that owns the package directory.
+
+        Returns:
+            The typed Python package and its materialized directory.
+
+        Raises:
+            TypeError: If the configured composer returns another package type.
+        """
+
         assert self.composer is not None
         package = self.composer.compose(self.individual)
         if not isinstance(package, PythonExecutionPackage):
@@ -138,6 +220,8 @@ class PythonImageFunctionalTask(EvaluationTask):
         package_dir: Path,
         samples: tuple[_ImageFunctionalSample, ...],
     ) -> None:
+        """Persist the ordered input-to-reference mapping beside the package."""
+
         context.write_json(
             package_dir / "dataset_manifest.json",
             [
@@ -159,6 +243,8 @@ class PythonImageFunctionalTask(EvaluationTask):
         context: ExecutionContext,
         executions: tuple[_ImageFunctionalExecution, ...],
     ) -> None:
+        """Persist output paths, timings, and errors for every attempted sample."""
+
         context.write_json(
             context.artifact_path(self, "execution_manifest.json"),
             [
@@ -197,6 +283,8 @@ class PythonImageFunctionalTask(EvaluationTask):
         self,
         executions: tuple[_ImageFunctionalExecution, ...],
     ) -> ImageFunctionalMetricsArtifact:
+        """Build the aggregate and per-sample functional metrics artifact."""
+
         per_sample_metrics = self._compute_metrics(executions)
         values = self._aggregate_metrics(per_sample_metrics)
         return ImageFunctionalMetricsArtifact(
@@ -213,6 +301,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @classmethod
     def _raise_for_zero_critical_metrics(cls, metrics: Mapping[str, float]) -> None:
+        """Reject exact-zero critical metrics while allowing absent metrics."""
+
         zero_metrics = sorted(
             metric
             for metric in cls._CRITICAL_ZERO_METRICS
@@ -225,6 +315,13 @@ class PythonImageFunctionalTask(EvaluationTask):
             )
 
     def _validate_configuration(self, context: ExecutionContext) -> Path:
+        """Validate dataset and metric configuration and resolve the image path.
+
+        References become mandatory when metrics are requested. A supplied
+        reference directory may still be used with no metrics, while unsupported
+        metric names are always rejected.
+        """
+
         if self.composer is None:
             raise ValueError("PythonImageFunctionalTask requires a composer.")
         if self.images_path is None:
@@ -259,6 +356,20 @@ class PythonImageFunctionalTask(EvaluationTask):
         context: ExecutionContext,
         images_path: Path,
     ) -> tuple[_ImageFunctionalSample, ...]:
+        """Create a deterministic dataset and require every configured reference.
+
+        Args:
+            context: Execution context used to resolve the reference directory.
+            images_path: Validated directory of supported input images.
+
+        Returns:
+            Samples ordered lexicographically by input filename.
+
+        Raises:
+            ValueError: If a reference directory is configured but any input has
+                no exact-name or same-stem reference image.
+        """
+
         references_path = (
             context.resolve_path(self.references_path)
             if self.references_path is not None
@@ -303,6 +414,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @classmethod
     def _match_reference(cls, image_path: Path, references_path: Path | None) -> Path | None:
+        """Select an exact-name reference or the first same-stem alternative."""
+
         if references_path is None:
             return None
 
@@ -329,6 +442,13 @@ class PythonImageFunctionalTask(EvaluationTask):
         package_dir: Path,
         samples: tuple[_ImageFunctionalSample, ...],
     ) -> tuple[_ImageFunctionalExecution, ...]:
+        """Run the package entrypoint once per sample and persist PNG outputs.
+
+        Exceptions are captured per sample rather than raised immediately so the
+        caller can persist a complete execution manifest before reporting the
+        failed sample identifiers.
+        """
+
         runner = self._load_entrypoint(package, package_dir)
         outputs_dir = context.ensure_dir(context.artifact_path(self, "outputs"))
         executions: list[_ImageFunctionalExecution] = []
@@ -364,6 +484,23 @@ class PythonImageFunctionalTask(EvaluationTask):
         package: PythonExecutionPackage,
         package_dir: Path,
     ) -> Callable[[Any], Any]:
+        """Load a callable from the package's ``path:function`` entrypoint.
+
+        Args:
+            package: Composed package declaring the relative module entrypoint.
+            package_dir: Directory containing the materialized module.
+
+        Returns:
+            A callable accepting an image object and returning an image object.
+
+        Raises:
+            ValueError: If the entrypoint omits the colon separator.
+            RuntimeError: If no module loader is available or the named object is
+                not callable.
+            Exception: Exceptions raised while importing the composed module
+                propagate unchanged.
+        """
+
         module_path_text, separator, function_name = package.entrypoint.partition(":")
         if not separator:
             raise ValueError(f"Invalid Python entrypoint: {package.entrypoint!r}.")
@@ -401,6 +538,13 @@ class PythonImageFunctionalTask(EvaluationTask):
         self,
         executions: tuple[_ImageFunctionalExecution, ...],
     ) -> dict[str, dict[str, float]]:
+        """Compute requested metrics for successful samples with references.
+
+        Reference masks are resized to prediction dimensions with nearest-neighbor
+        interpolation. Failed samples and samples without references do not
+        contribute entries to the returned per-sample mapping.
+        """
+
         requested_metrics = frozenset(self.metrics)
         requested_mask_metrics = requested_metrics & self._MASK_METRICS
         requested_instance_metrics = requested_metrics & self._INSTANCE_METRICS
@@ -438,6 +582,8 @@ class PythonImageFunctionalTask(EvaluationTask):
     def _aggregate_metrics(
         per_sample_metrics: Mapping[str, Mapping[str, float]],
     ) -> dict[str, float]:
+        """Average each metric over only the samples that provide that metric."""
+
         metric_names = sorted(
             {
                 metric_name
@@ -461,6 +607,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _binary_mask(image: Any) -> Any:
+        """Convert grayscale or multichannel data to a nonzero foreground mask."""
+
         import numpy as np
 
         array = np.asarray(image)
@@ -487,6 +635,13 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _mask_metrics(prediction: Any, reference: Any) -> dict[str, float]:
+        """Calculate pixel confusion-matrix metrics for two binary masks.
+
+        Returns accuracy, balanced accuracy, IoU, F1, false-negative and
+        false-positive rates, precision, recall, and specificity. Undefined
+        zero-over-zero ratios follow :meth:`_safe_div` and evaluate to 1.0.
+        """
+
         import numpy as np
 
         pred = np.asarray(prediction, dtype=bool)
@@ -523,6 +678,13 @@ class PythonImageFunctionalTask(EvaluationTask):
         reference: Any,
         requested_metrics: frozenset[str] | None = None,
     ) -> dict[str, float]:
+        """Calculate object-count and matched bounding-box metrics.
+
+        Each 8-connected foreground component defines an instance. Precision,
+        recall, F1, and mean box IoU use greedy one-to-one matches; when only
+        ``count_error`` is requested, box matching is skipped.
+        """
+
         pred_boxes = cls._bounding_boxes(prediction)
         ref_boxes = cls._bounding_boxes(reference)
         count_error = float(abs(len(pred_boxes) - len(ref_boxes)))
@@ -550,6 +712,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _bounding_boxes(mask: Any) -> list[_BoundingBox]:
+        """Extract boxes for 8-connected foreground components, excluding background."""
+
         import cv2 as cv
         import numpy as np
 
@@ -570,10 +734,18 @@ class PythonImageFunctionalTask(EvaluationTask):
         pred_boxes: list[_BoundingBox],
         ref_boxes: list[_BoundingBox],
     ) -> list[tuple[int, int, float]]:
+        """Greedily match highest-IoU prediction/reference box pairs.
+
+        Returns:
+            Tuples of prediction index, reference index, and IoU for unique pairs
+            meeting :attr:`_BOX_IOU_THRESHOLD`, ordered by descending IoU.
+        """
+
         import numpy as np
 
         # Greedily select highest-IoU one-to-one matches above the threshold.
         threshold = cls._BOX_IOU_THRESHOLD
+        candidate_pairs: Iterable[tuple[Any, Any]]
         if threshold > 0.0 and pred_boxes and ref_boxes:
             pred = np.asarray(
                 [(box.x_min, box.y_min, box.x_max, box.y_max) for box in pred_boxes]
@@ -624,6 +796,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _box_iou(left: _BoundingBox, right: _BoundingBox) -> float:
+        """Return box intersection over union using exclusive maximum coordinates."""
+
         x_min = max(left.x_min, right.x_min)
         y_min = max(left.y_min, right.y_min)
         x_max = min(left.x_max, right.x_max)
@@ -638,6 +812,8 @@ class PythonImageFunctionalTask(EvaluationTask):
 
     @staticmethod
     def _safe_div(numerator: float, denominator: float) -> float:
+        """Divide metric terms, defining every zero-denominator ratio as 1.0."""
+
         # Metric convention: every undefined 0/0 ratio evaluates to 1.0.
         if denominator == 0.0:
             return 1.0
@@ -653,9 +829,23 @@ class PythonImageFunctionalTask(EvaluationTask):
 
 @dataclass(frozen=True, slots=True)
 class PythonImageFunctionalEvaluationStep(EvaluationStep):
-    """Creates tasks for functional evaluation of Python image pipelines."""
+    """Configure task creation for functional Python image evaluation.
+
+    Attributes:
+        id: Evaluation graph identifier and default artifact producer.
+        depends_on: Step identifiers that must complete before this step.
+        composer: Composer propagated to each functional task.
+        images_path: Input image dataset directory.
+        references_path: Optional ground-truth image directory.
+        metrics: Ordered functional metrics requested from each task.
+        metadata: Additional metadata propagated to each task.
+        task_type: Concrete task class created by the step.
+    """
 
     id: str = "python_image_functional"
+    produced_artifacts = {
+        "image_functional_metrics": ImageFunctionalMetricsArtifact,
+    }
     depends_on: tuple[str, ...] = ()
     composer: Composer | None = None
     images_path: Path | None = None
@@ -665,7 +855,7 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
     task_type: type[EvaluationTask] = PythonImageFunctionalTask
 
     def checkpoint_signature(self) -> Mapping[str, Any]:
-        """Return functional dataset, metric and composer configuration."""
+        """Return functional dataset, metric, and composer checkpoint inputs."""
 
         return {
             **EvaluationStep.checkpoint_signature(self),
@@ -681,7 +871,15 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
-        """Create a Python image functional evaluation task for an individual."""
+        """Create a functional task and record available upstream artifacts.
+
+        Args:
+            individual: Candidate image pipeline to evaluate.
+            artifacts: Artifacts available from dependency steps.
+
+        Returns:
+            A configured :class:`PythonImageFunctionalTask`.
+        """
 
         return PythonImageFunctionalTask(
             individual=individual,

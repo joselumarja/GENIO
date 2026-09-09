@@ -1,3 +1,5 @@
+"""Session-scoped artifact-cache contracts and stable key generation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,7 +14,16 @@ from genio.artifacts import Artifact
 
 @dataclass(frozen=True, slots=True)
 class CacheEntry:
-    """Store one successful artifact bundle and its LFU access metadata."""
+    """Store one successful artifact bundle and its access metadata.
+
+    Attributes:
+        namespace: Usually the evaluation-step ID that owns the entry.
+        key: Digest of the namespace and task's semantic inputs.
+        artifacts: Deep-copied successful outputs of the representative task.
+        source_individual_id: Individual whose task produced the stored payload.
+        read_count: Logical uses of the entry, including coalesced requests.
+        last_access: Monotonic cache-local sequence used for recency tie-breaking.
+    """
 
     namespace: str
     key: str
@@ -45,11 +56,22 @@ class CacheEntry:
 
 
 class ArtifactCache(ABC):
-    """Session-scoped cache for successful artifact bundles."""
+    """Define a session-scoped cache for successful artifact bundles.
+
+    Evaluation tasks opt in by returning semantic inputs from
+    ``EvaluationTask.cache_inputs``. Namespaces isolate steps with otherwise
+    identical inputs, while cache entries rebind their artifacts to the requesting
+    individual without moving the underlying payload.
+    """
 
     @staticmethod
     def build_key(namespace: str, inputs: Mapping[str, Any]) -> str:
-        """Build a deterministic SHA-256 key from a namespace and semantic inputs."""
+        """Build a SHA-256 key from a namespace and semantic inputs.
+
+        Mappings are serialized with sorted keys and compact JSON. Unsupported
+        values fall back to ``str(value)``, so custom objects must provide a stable
+        string representation if keys are expected to be reproducible.
+        """
 
         payload = json.dumps(
             {"namespace": namespace, "inputs": inputs},

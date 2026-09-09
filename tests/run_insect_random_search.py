@@ -1,8 +1,7 @@
-"""Run functional, HLS and X-HEEP evaluation for insect segmentation."""
+"""Run NSGA-II functional, HLS, and X-HEEP insect optimization."""
 
 import os
 from pathlib import Path
-from random import Random
 import re
 import signal
 import sys
@@ -17,11 +16,14 @@ from genio import (  # noqa: E402
     HLSImagePipelineComposer,
     HLSImagePipelineSynthesisEvaluationStep,
     LFUArtifactCache,
+    MetricObjective,
     OptimizationSession,
+    ObjectiveSet,
+    OptimizationDirection,
     ParallelLocalBackend,
     PythonImageFunctionalEvaluationStep,
     PythonImagePipelineComposer,
-    RandomSearch,
+    NSGA2Search,
     SearchSpace,
     GRHeepConfigurationComposer,
     XHeepVerilatorSimulationEvaluationStep,
@@ -45,17 +47,17 @@ def active_vitis_version() -> str:
     raise RuntimeError(f"Cannot infer Vitis version from XILINX_VITIS={vitis_root!r}.")
 
 
-VITIS_VERSION = active_vitis_version()
 IMAGES_PATH = Path("/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Images")
 MASKS_PATH = Path("/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly/Masks")
 VITIS_LIBRARIES_PATH = Path(
     os.environ.get("VITIS_LIBRARIES_PATH", ROOT / "Vitis_Libraries")
 )
 HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
-OUTPUT_DIR = ROOT / "tmp/insect_xheep_random_search"
+OUTPUT_DIR = ROOT / "tmp/insect_xheep_nsga2_search"
 
 MAX_EVALUATIONS = 50
 BATCH_SIZE = 50
+MAX_GENERATIONS = (MAX_EVALUATIONS + BATCH_SIZE - 1) // BATCH_SIZE
 MAX_WORKERS = 16
 SEED = 0
 
@@ -65,7 +67,6 @@ COLS = 192
 FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 30 * 60
 
-#GR_HEEP_PATH = Path("/home/joselu/Integration/GEN-HEEP")
 GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
 XHEEP_TIMEOUT_SECONDS = 30 * 60
 
@@ -79,12 +80,10 @@ def main() -> None:
         ROOT / "search_space/tests/insect_xheep_exploration_pipeline.json",
         ROOT / "search_space/stages/definitions",
     )
-    algorithm = RandomSearch(
-        max_evaluations=MAX_EVALUATIONS,
-        batch_size=BATCH_SIZE,
-        unique=True,
-        balanced=True,
-        random=Random(SEED),
+    algorithm = NSGA2Search(
+        population_size=BATCH_SIZE,
+        max_generations=MAX_GENERATIONS,
+        seed=SEED,
     )
 
     functional_step = PythonImageFunctionalEvaluationStep(
@@ -98,7 +97,7 @@ def main() -> None:
         composer=HLSImagePipelineComposer(
             ROOT / "search_space/stages/definitions",
             templates_path=ROOT / "hls_templates/vitis_vision_image_pipeline",
-            vitis_version=VITIS_VERSION,
+            vitis_version=active_vitis_version(),
             rows=ROWS,
             cols=COLS,
             interface="safa_fifo",
@@ -107,28 +106,37 @@ def main() -> None:
         metadata={"execution": {"timeout_seconds": HLS_TIMEOUT_SECONDS}},
     )
 
-    """xheep_step = XHeepVerilatorSimulationEvaluationStep(
+    xheep_step = XHeepVerilatorSimulationEvaluationStep(
         depends_on=(hls_step.id,),
         composer=GRHeepConfigurationComposer(
             ROOT / "search_space/stages/definitions",
             templates_path=ROOT / "gr_heep_templates",
+            application_name="genio_trans_flash_mem",
         ),
         gr_heep_path=GR_HEEP_PATH,
-        input_image_path=next(
-            path for path in sorted(IMAGES_PATH.iterdir()) if path.is_file()
-        ),
         metadata={"execution": {"timeout_seconds": XHEEP_TIMEOUT_SECONDS}},
-    )"""
-    xheep_step = XHeepVerilatorSimulationEvaluationStep(
-            depends_on=(hls_step.id,),
-            composer=GRHeepConfigurationComposer(
-                ROOT / "search_space/stages/definitions",
-                templates_path=ROOT / "gr_heep_templates",
-            ),
-            gr_heep_path=GR_HEEP_PATH,
-            metadata={"execution": {"timeout_seconds": XHEEP_TIMEOUT_SECONDS}},
-        )
+    )
     workflow = EvaluationWorkflow((functional_step, hls_step, xheep_step))
+    objective_set = ObjectiveSet(
+        (
+            MetricObjective(
+                metric=f"{functional_step.id}.mask_f1",
+                direction=OptimizationDirection.MAXIMIZE,
+                name="mask_f1",
+                normalization_bounds=(0.0, 1.0),
+            ),
+            MetricObjective(
+                metric=f"{hls_step.id}.hls_synthesis.lut",
+                direction=OptimizationDirection.MINIMIZE,
+                name="hls_lut",
+            ),
+            MetricObjective(
+                metric=f"{xheep_step.id}.xheep_verilator.application_cycles",
+                direction=OptimizationDirection.MINIMIZE,
+                name="application_cycles",
+            ),
+        )
+    )
 
     cache = LFUArtifactCache(
         {functional_step.id: 64, hls_step.id: 16, xheep_step.id: 8}
@@ -150,14 +158,15 @@ def main() -> None:
             },
         ) as backend:
             result = OptimizationSession(
-                id="insect_xheep_random_search",
-                run_id="insect_xheep_random_search",
+                id="insect_xheep_nsga2_search",
+                run_id="insect_xheep_nsga2_search",
                 search_space=search_space,
                 algorithm=algorithm,
                 backend=backend,
                 evaluation_workflow=workflow,
                 statistics=statistics,
                 artifact_cache=cache,
+                objective_set=objective_set,
             ).run()
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)

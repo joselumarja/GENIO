@@ -155,6 +155,7 @@ class _SSHExecutionContext(ExecutionContext):
                     "Could not confirm termination of remote process group in "
                     f"{str(remote_cwd)!r}."
                 ) from exc
+            assert timeout is not None
             raise subprocess.TimeoutExpired(
                 normalized_command,
                 timeout,
