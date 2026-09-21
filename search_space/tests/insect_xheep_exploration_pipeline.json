@@ -23,7 +23,7 @@
       },
       "pipeline_ii": {
         "type": "choice",
-        "values": [1, 2]
+        "values": [1, 2, 3, 4, 5]
       },
       "use_uram": {
         "type": "constant",
@@ -45,7 +45,7 @@
       },
       "memory_bank_size_kib": {
         "type": "choice",
-        "values": [16, 32]
+        "values": [16, 32, 64]
       },
       "memory_interleaved_ratio": {
         "type": "choice",
@@ -57,11 +57,11 @@
       },
       "dma_fifo_depth": {
         "type": "choice",
-        "values": [2, 4, 8]
+        "values": [2, 4, 8, 16]
       },
       "accelerator_fifo_depth":{
         "type": "choice",
-        "values": [2, 4, 8]
+        "values": [2, 4, 8, 16]
       },
       "accelerator_fifo_almost_full_margin":{
         "type": "choice",
@@ -74,7 +74,41 @@
       "slot": 0,
       "candidates": [
         {
-          "stage": "bgr_to_gray"
+          "stage": "nop"
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 120
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 160
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
+        },
+        {
+          "stage": "resize",
+          "parameters": {
+            "out_cols": {
+              "type": "constant",
+              "value": 60
+            },
+            "out_rows": {
+              "type": "constant",
+              "value": 80
+            },
+            "interpolation": {
+              "type": "constant",
+              "value": "area"
+            }
+          }
         }
       ]
     },
@@ -96,8 +130,10 @@
           "stage": "threshold",
           "parameters": {
             "threshold": {
-              "type": "choice",
-              "values": [18, 24, 30, 36, 42]
+              "type": "integer_range",
+              "start": 0,
+              "stop": 50,
+              "step": 3
             },
             "maxval": {
               "type": "constant",
@@ -113,6 +149,190 @@
     },
     {
       "slot": 3,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 4,
+      "candidates": [
+        {
+          "stage": "nop"
+        },
+        {
+          "stage": "erode",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "dilate",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_open",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        },
+        {
+          "stage": "morph_close",
+          "parameters": {
+            "kernel_shape": {
+              "type": "constant",
+              "value": "rect"
+            },
+            "kernel_rows": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "kernel_cols": {
+              "type": "choice",
+              "values": [3, 5]
+            },
+            "iterations": {
+              "type": "constant",
+              "value": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "slot": 5,
       "candidates": [
         {
           "stage": "nop"

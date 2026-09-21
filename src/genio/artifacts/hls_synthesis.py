@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+import json
 from pathlib import Path
+import shutil
 from typing import Any, Sequence
 
 from genio.artifacts.base import Artifact, MetricArtifact
@@ -24,6 +27,46 @@ class HLSReportArtifact(MetricArtifact):
         """Return metrics prefixed with the report origin."""
         return {f"{self.origin}.{key}": value for key, value in self.values.items()}
 
+    def for_cache(self, target_dir: str | Path) -> "HLSReportArtifact":
+        """Copy reports into cache-owned storage and rebind their paths."""
+
+        root = Path(target_dir)
+        copied_paths = _copy_paths(self.report_paths, root / "reports")
+        metadata = deepcopy(dict(self.metadata))
+        source_map = {
+            str(source): str(target)
+            for source, target in zip(self.report_paths, copied_paths, strict=True)
+        }
+        source_xml = metadata.get("source_xml_report")
+        if isinstance(source_xml, str):
+            if source_xml in source_map:
+                metadata["source_xml_report"] = source_map[source_xml]
+            else:
+                metadata.pop("source_xml_report")
+        metadata.pop("path", None)
+        descriptor = root / "artifact.json"
+        descriptor.parent.mkdir(parents=True, exist_ok=True)
+        descriptor.write_text(
+            json.dumps(
+                {
+                    "origin": self.origin,
+                    "report_paths": [str(path) for path in copied_paths],
+                    "metrics": dict(self.values),
+                    "metadata": metadata,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        metadata["path"] = str(descriptor)
+        return replace(
+            deepcopy(self),
+            report_paths=copied_paths,
+            metadata=metadata,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class HLSRTLArtifact(Artifact):
@@ -42,6 +85,61 @@ class HLSRTLArtifact(Artifact):
     def load(self) -> Sequence[Any]:
         """Return all generated RTL file paths."""
         return self.rtl_paths
+
+    def for_cache(self, target_dir: str | Path) -> "HLSRTLArtifact":
+        """Copy generated RTL into cache-owned storage and rebind paths."""
+
+        root = Path(target_dir)
+        verilog_paths = _copy_paths(self.verilog_paths, root / "verilog")
+        vhdl_paths = _copy_paths(self.vhdl_paths, root / "vhdl")
+        metadata = deepcopy(dict(self.metadata))
+        metadata.pop("path", None)
+        descriptor = root / "artifact.json"
+        descriptor.parent.mkdir(parents=True, exist_ok=True)
+        descriptor.write_text(
+            json.dumps(
+                {
+                    "origin": self.origin,
+                    "top_function": self.top_function,
+                    "verilog_paths": [str(path) for path in verilog_paths],
+                    "vhdl_paths": [str(path) for path in vhdl_paths],
+                    "metadata": metadata,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        metadata["path"] = str(descriptor)
+        return replace(
+            deepcopy(self),
+            verilog_paths=verilog_paths,
+            vhdl_paths=vhdl_paths,
+            metadata=metadata,
+        )
+
+
+def _copy_paths(paths: Sequence[Path], target_dir: Path) -> tuple[Path, ...]:
+    if not paths:
+        return ()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    names: set[str] = set()
+    for source in paths:
+        source = Path(source)
+        if not source.exists():
+            raise FileNotFoundError(f"Artifact payload does not exist: {source}")
+        if source.name in names:
+            raise ValueError(f"Artifact payload names must be unique: {source.name!r}")
+        names.add(source.name)
+        target = target_dir / source.name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+        copied.append(target)
+    return tuple(copied)
 
 
 __all__ = [

@@ -269,6 +269,33 @@ def test_lfu_cache_keeps_step_partitions_independent() -> None:
     assert cache.get("hls", "h1") is not None
 
 
+def test_lfu_cache_removes_persisted_storage_on_eviction_and_clear(tmp_path) -> None:
+    cache = LFUArtifactCache({"step": 1}, storage_dir=tmp_path / "cache")
+    first = cache.put(
+        "step",
+        "first",
+        [metric_artifact("first")],
+        source_individual_id="first",
+    )
+    assert first.storage_path is not None and first.storage_path.is_dir()
+
+    second = cache.put(
+        "step",
+        "second",
+        [metric_artifact("second")],
+        source_individual_id="second",
+    )
+    assert first.storage_path is not None and first.storage_path.exists()
+    assert second.storage_path is not None and second.storage_path.is_dir()
+
+    cache.prune()
+    assert not first.storage_path.exists()
+
+    cache.clear()
+    assert second.storage_path is not None and not second.storage_path.exists()
+    assert cache.storage_dir.is_dir()
+
+
 def test_production_tasks_select_only_relevant_cache_inputs() -> None:
     base = make_individual(
         "base",

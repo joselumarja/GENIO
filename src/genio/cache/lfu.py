@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from pathlib import Path
+import shutil
+from tempfile import mkdtemp
 from threading import Lock
 from typing import Any
 
@@ -35,6 +38,7 @@ class LFUArtifactCache(ArtifactCache):
         capacities: Mapping[str, int] | None = None,
         *,
         default_capacity: int = 0,
+        storage_dir: str | Path | None = None,
     ) -> None:
         """Configure per-namespace entry limits.
 
@@ -42,6 +46,8 @@ class LFUArtifactCache(ArtifactCache):
             capacities: Explicit capacities keyed by namespace.
             default_capacity: Limit used for namespaces not listed explicitly. A
                 value of zero disables caching for those namespaces.
+            storage_dir: Dedicated directory for cache-owned artifact payloads.
+                A temporary directory is created when omitted.
 
         Raises:
             ValueError: If any capacity is negative.
@@ -53,9 +59,16 @@ class LFUArtifactCache(ArtifactCache):
             raise ValueError("Cache capacities cannot be negative.")
         self.capacities = normalized_capacities
         self.default_capacity = default_capacity
+        self.storage_dir = Path(
+            storage_dir
+            if storage_dir is not None
+            else mkdtemp(prefix="genio-artifact-cache-")
+        ).resolve()
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._entries: dict[str, dict[str, CacheEntry]] = {}
         self._stats: dict[str, _NamespaceStats] = {}
         self._access_sequence = 0
+        self._retired_storage: set[Path] = set()
         self._lock = Lock()
 
     def capacity(self, namespace: str) -> int:
@@ -112,6 +125,21 @@ class LFUArtifactCache(ArtifactCache):
             if existing is not None:
                 return existing
 
+            entry_storage = self._entry_storage(namespace, key)
+            if entry_storage.exists():
+                shutil.rmtree(entry_storage)
+            entry_storage.mkdir(parents=True)
+            try:
+                persisted_artifacts = tuple(
+                    artifact.for_cache(
+                        entry_storage / f"{index:04d}-{artifact.name}"
+                    )
+                    for index, artifact in enumerate(artifacts)
+                )
+            except BaseException:
+                shutil.rmtree(entry_storage, ignore_errors=True)
+                raise
+
             if len(entries) >= capacity:
                 victim = min(
                     entries.values(),
@@ -122,16 +150,19 @@ class LFUArtifactCache(ArtifactCache):
                     ),
                 )
                 del entries[victim.key]
+                if victim.storage_path is not None:
+                    self._retired_storage.add(victim.storage_path)
                 stats.evictions += 1
 
             self._access_sequence += 1
             entry = CacheEntry(
                 namespace=namespace,
                 key=key,
-                artifacts=tuple(deepcopy(tuple(artifacts))),
+                artifacts=tuple(deepcopy(persisted_artifacts)),
                 source_individual_id=source_individual_id,
                 read_count=initial_reads,
                 last_access=self._access_sequence,
+                storage_path=entry_storage,
             )
             entries[key] = entry
             stats.stores += 1
@@ -153,6 +184,19 @@ class LFUArtifactCache(ArtifactCache):
             self._entries.clear()
             self._stats.clear()
             self._access_sequence = 0
+            self._retired_storage.clear()
+            if self.storage_dir.exists():
+                shutil.rmtree(self.storage_dir)
+            self.storage_dir.mkdir(parents=True)
+
+    def prune(self) -> None:
+        """Delete payload directories retired by LFU eviction."""
+
+        with self._lock:
+            retired = tuple(self._retired_storage)
+            self._retired_storage.clear()
+        for path in retired:
+            shutil.rmtree(path, ignore_errors=True)
 
     def snapshot(self) -> dict[str, Any]:
         """Return aggregate and per-namespace LFU telemetry.
@@ -187,10 +231,26 @@ class LFUArtifactCache(ArtifactCache):
             totals["hit_rate"] = (
                 totals["executions_avoided"] / requests if requests else 0.0
             )
-            return {"totals": totals, "namespaces": per_namespace}
+            return {
+                "storage_dir": str(self.storage_dir),
+                "totals": totals,
+                "namespaces": per_namespace,
+            }
 
     def _namespace_stats(self, namespace: str) -> _NamespaceStats:
         return self._stats.setdefault(namespace, _NamespaceStats())
+
+    def _entry_storage(self, namespace: str, key: str) -> Path:
+        for value, name in ((namespace, "namespace"), (key, "key")):
+            if (
+                not isinstance(value, str)
+                or not value
+                or value in {".", ".."}
+                or "/" in value
+                or "\\" in value
+            ):
+                raise ValueError(f"Cache {name} must be a safe path segment.")
+        return self.storage_dir / namespace / key
 
     def _namespace_snapshot(self, namespace: str) -> dict[str, int | float]:
         stats = self._stats.get(namespace, _NamespaceStats())

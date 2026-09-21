@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import shutil
 from tempfile import mkdtemp
 from typing import Any
 from uuid import uuid4
@@ -54,6 +55,15 @@ class _LocalExecutionBackend(Backend):
             "type": f"{type(self).__module__}.{type(self).__qualname__}",
             "metadata": self.metadata,
         }
+
+    def cleanup_individual_workspace(self, individual_id: str) -> None:
+        """Remove a completed individual's local workspace tree."""
+
+        workspace = ExecutionContext(
+            base_work_dir=self.base_work_dir
+        ).individual_dir(individual_id)
+        if workspace.exists():
+            shutil.rmtree(workspace)
 
     @staticmethod
     def _resolve_base_work_dir(base_work_dir: str | Path | None) -> Path:

@@ -17,23 +17,13 @@
 #define GENIO_FLASH_SECTOR_BYTES 4096u
 #define GENIO_DMA_MAX_WORDS 65535u
 
-#define TRAFFIC_WORDS 1024u
-#define TRAFFIC_DMA_CHANNEL 1u
-
 static dma_trans_t accelerator_transaction;
 static dma_target_t accelerator_source;
 static dma_target_t accelerator_destination;
-static dma_trans_t traffic_transaction;
-static dma_target_t traffic_source_target;
-static dma_target_t traffic_destination_target;
 static safa_t safa;
 
 static uint32_t flash_read_setup_cookie;
 static uint32_t input_flash_offset;
-static uint32_t traffic_source[TRAFFIC_WORDS]
-    __attribute__((aligned(16)));
-static uint32_t traffic_destination[TRAFFIC_WORDS]
-    __attribute__((aligned(16)));
 
 static int validate_configuration(void) {
     if (GENIO_INPUT_WORDS == 0u || GENIO_OUTPUT_WORDS == 0u) {
@@ -143,46 +133,6 @@ static int configure_flash_to_accelerator_dma(void) {
     return 0;
 }
 
-static int configure_traffic_dma(void) {
-    traffic_source_target.ptr = (uint8_t *)traffic_source;
-    traffic_source_target.inc_d1_du = 1;
-    traffic_source_target.trig = DMA_TRIG_MEMORY;
-    traffic_source_target.type = DMA_DATA_TYPE_WORD;
-
-    traffic_destination_target.ptr = (uint8_t *)traffic_destination;
-    traffic_destination_target.inc_d1_du = 1;
-    traffic_destination_target.trig = DMA_TRIG_MEMORY;
-    traffic_destination_target.type = DMA_DATA_TYPE_WORD;
-
-    traffic_transaction.src = &traffic_source_target;
-    traffic_transaction.dst = &traffic_destination_target;
-    traffic_transaction.mode = DMA_TRANS_MODE_SINGLE;
-    traffic_transaction.hw_fifo_en = 0;
-    traffic_transaction.channel = TRAFFIC_DMA_CHANNEL;
-    traffic_transaction.dim = DMA_DIM_CONF_1D;
-    traffic_transaction.size_d1_du = TRAFFIC_WORDS;
-    traffic_transaction.end = DMA_TRANS_END_POLLING;
-
-    if (dma_validate_transaction(
-            &traffic_transaction,
-            DMA_ENABLE_REALIGN,
-            DMA_PERFORM_CHECKS_INTEGRITY
-        ) != DMA_CONFIG_OK) {
-        printf("Traffic DMA validation failed\n");
-        return -1;
-    }
-    return 0;
-}
-
-static void initialize_traffic(void) {
-    uint32_t state = 0x6d2b79f5u;
-    for (uint32_t i = 0; i < TRAFFIC_WORDS; ++i) {
-        state = state * 1664525u + 1013904223u;
-        traffic_source[i] = state;
-        traffic_destination[i] = 0u;
-    }
-}
-
 static int wait_for_accelerator(void) {
     const uint64_t start = genio_read_cycles();
 
@@ -259,6 +209,10 @@ static void print_metrics(void) {
     }
 
     printf("GENIO_METRIC:safa_active_cycles:%lu\n", (unsigned long)counters.active_cycles);
+    printf("GENIO_METRIC:safa_input_fifo_empty_cycles:%lu\n", (unsigned long)counters.input_fifo_empty_cycles);
+    printf("GENIO_METRIC:safa_input_fifo_full_cycles:%lu\n", (unsigned long)counters.input_fifo_full_cycles);
+    printf("GENIO_METRIC:safa_output_fifo_empty_cycles:%lu\n", (unsigned long)counters.output_fifo_empty_cycles);
+    printf("GENIO_METRIC:safa_output_fifo_full_cycles:%lu\n", (unsigned long)counters.output_fifo_full_cycles);
     printf("GENIO_METRIC:safa_input_stall_cycles:%lu\n", (unsigned long)counters.input_stall_cycles);
     printf("GENIO_METRIC:safa_output_stall_cycles:%lu\n", (unsigned long)counters.output_stall_cycles);
     printf("GENIO_METRIC:safa_dma_push_stall_cycles:%lu\n", (unsigned long)counters.dma_push_stall_cycles);
@@ -275,16 +229,13 @@ static void print_metrics(void) {
 
 int main(void) {
     int status = 1;
-    int traffic_started = 0;
 
     genio_perf_init();
     dma_init(NULL);
-    initialize_traffic();
 
     if (validate_configuration() != 0 ||
         configure_flash() != 0 ||
-        configure_safa() != 0 ||
-        configure_traffic_dma() != 0) {
+        configure_safa() != 0) {
         printf("GENIO_STATUS:%d\n", status);
         return status;
     }
@@ -292,16 +243,9 @@ int main(void) {
     GENIO_PERF_BEGIN(application);
     if (configure_flash_to_accelerator_dma() == 0) {
         dma_load_transaction(&accelerator_transaction);
-        dma_load_transaction(&traffic_transaction);
         dma_launch(&accelerator_transaction);
-        dma_launch(&traffic_transaction);
-        traffic_started = 1;
 
         if (wait_for_accelerator() == 0 && output_is_complete()) {
-            while (!dma_is_ready(TRAFFIC_DMA_CHANNEL)) {
-            }
-            traffic_started = 0;
-
             GENIO_PERF_BEGIN(flash_write);
             if (store_output_in_flash() == 0) {
                 status = 0;
@@ -311,15 +255,8 @@ int main(void) {
     }
     GENIO_PERF_END(application);
 
-    if (traffic_started) {
-        while (!dma_is_ready(TRAFFIC_DMA_CHANNEL)) {
-        }
-    }
     print_metrics();
     (void)safa_clear_done(&safa);
-    printf("GENIO_METRIC:traffic_words:%lu\n", (unsigned long)TRAFFIC_WORDS);
-    printf("GENIO_METRIC:traffic_checksum:%lu\n",
-           (unsigned long)buffer_checksum(traffic_destination, TRAFFIC_WORDS));
     printf("GENIO_STATUS:%d\n", status);
     return status;
 }

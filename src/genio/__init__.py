@@ -108,7 +108,16 @@ from genio.objective import (
 )
 from genio.search_space import SearchScenarioSpec, SearchSpace, SlotSpec
 from genio.session import OptimizationSession
-from genio.statistics import CSVStatisticsCollector, InMemoryStatistics, StatisticsCollector
+from genio.statistics import (
+    CSVStatisticsCollector,
+    CompositeStatisticsCollector,
+    InMemoryStatistics,
+    PopulationAnalysisCollector,
+    PopulationAnalysisError,
+    PopulationPlotConfig,
+    PopulationStatisticsCollector,
+    StatisticsCollector,
+)
 
 __all__ = [
     "Backend",
@@ -119,6 +128,7 @@ __all__ = [
     "ArtifactError",
     "Composer",
     "ComposerError",
+    "CompositeStatisticsCollector",
     "CSVStatisticsCollector",
     "CacheEntry",
     "CheckpointCompatibilityError",
@@ -172,6 +182,10 @@ __all__ = [
     "OptimizationDirection",
     "ParallelLocalBackend",
     "ParallelSSHBackend",
+    "PopulationAnalysisCollector",
+    "PopulationAnalysisError",
+    "PopulationPlotConfig",
+    "PopulationStatisticsCollector",
     "Proposal",
     "PythonExecutionPackage",
     "PythonImagePipelineComposer",

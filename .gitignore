@@ -1,4 +1,5 @@
 .kilo
+.mypy_cache
 .pytest_cache
 .vscode
 venv

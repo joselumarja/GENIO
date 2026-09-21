@@ -7,6 +7,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from genio.artifacts import Artifact
@@ -23,6 +24,7 @@ class CacheEntry:
         source_individual_id: Individual whose task produced the stored payload.
         read_count: Logical uses of the entry, including coalesced requests.
         last_access: Monotonic cache-local sequence used for recency tie-breaking.
+        storage_path: Dedicated cache directory containing persisted payloads.
     """
 
     namespace: str
@@ -31,6 +33,7 @@ class CacheEntry:
     source_individual_id: str
     read_count: int
     last_access: int
+    storage_path: Path | None = None
 
     def artifacts_for(
         self,
@@ -119,6 +122,9 @@ class ArtifactCache(ABC):
         """Discard every cached artifact bundle and reset telemetry."""
 
         raise NotImplementedError
+
+    def prune(self) -> None:
+        """Remove retired payloads after all consumers in a batch have finished."""
 
     @abstractmethod
     def snapshot(self) -> dict[str, Any]:

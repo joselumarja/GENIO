@@ -326,37 +326,68 @@ class GRHeepConfigurationComposer(Composer):
         artifact: HLSRTLArtifact,
         image_path: str | Path,
     ) -> str:
-        """Render the firmware input array from one functional dataset image."""
+        """Render a grayscale or BGR firmware input array from HLS metadata."""
 
         try:
             import cv2 as cv
         except ImportError as exc:
             raise ComposerError("Rendering a firmware image requires OpenCV.") from exc
 
-        path = Path(image_path)
-        image = cv.imread(str(path), cv.IMREAD_COLOR)
-        if image is None:
-            raise ComposerError(f"Cannot read firmware input image: {path}.")
-
         metadata = artifact.metadata
         try:
             rows = int(metadata["input_rows"])
             cols = int(metadata["input_cols"])
             input_words = int(metadata["input_words"])
+            input_type = str(metadata["input_type"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ComposerError("HLS artifact has invalid input image metadata.") from exc
         if rows <= 0 or cols <= 0 or input_words <= 0:
             raise ComposerError("HLS input image dimensions and word count must be positive.")
 
-        resized = cv.resize(image, (cols, rows), interpolation=cv.INTER_AREA)
-        payload = resized.tobytes(order="C")
-        expected_bytes = input_words * 4
-        if len(payload) > expected_bytes:
+        if input_type == "XF_8UC1":
+            read_flag = cv.IMREAD_GRAYSCALE
+            channels = 1
+        elif input_type == "XF_8UC3":
+            read_flag = cv.IMREAD_COLOR
+            channels = 3
+        else:
             raise ComposerError(
-                f"Input image needs {len(payload)} bytes but HLS expects "
-                f"{expected_bytes}."
+                f"Unsupported firmware input image type: {input_type!r}; "
+                "expected 'XF_8UC1' or 'XF_8UC3'."
             )
-        payload += bytes(expected_bytes - len(payload))
+
+        path = Path(image_path)
+        image = cv.imread(str(path), read_flag)
+        if image is None:
+            raise ComposerError(f"Cannot read firmware input image: {path}.")
+
+        resized = cv.resize(image, (cols, rows), interpolation=cv.INTER_AREA)
+        if str(resized.dtype) != "uint8":
+            raise ComposerError(
+                f"Firmware input image must contain uint8 samples; got {resized.dtype}."
+            )
+        if channels == 1 and resized.ndim != 2:
+            raise ComposerError("XF_8UC1 firmware input must be a two-dimensional image.")
+        if channels == 3 and (
+            resized.ndim != 3 or resized.shape[2] != channels
+        ):
+            raise ComposerError("XF_8UC3 firmware input must contain exactly three channels.")
+
+        payload = resized.tobytes(order="C")
+        logical_bytes = rows * cols * channels
+        if len(payload) != logical_bytes:
+            raise ComposerError(
+                f"Firmware input produced {len(payload)} bytes; expected "
+                f"{logical_bytes} for {input_type}."
+            )
+        expected_bytes = input_words * 4
+        padding_bytes = expected_bytes - logical_bytes
+        if padding_bytes < 0 or padding_bytes >= 4:
+            raise ComposerError(
+                f"HLS input_words reserves {expected_bytes} bytes, incompatible "
+                f"with the {logical_bytes}-byte {input_type} frame."
+            )
+        payload += bytes(padding_bytes)
         words = [
             int.from_bytes(payload[offset : offset + 4], "little")
             for offset in range(0, expected_bytes, 4)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -569,6 +570,26 @@ class _SSHExecutionBackend(Backend):
             ssh_command=self._ssh_command,
             rsync_command=(self.rsync_executable,),
             transfer_timeout=self.transfer_timeout,
+        )
+
+    def cleanup_individual_workspace(self, individual_id: str) -> None:
+        """Remove completed local staging and remote individual workspaces."""
+
+        normalized = self._validate_workspace_segment(individual_id, "individual_id")
+        local_workspace = ExecutionContext(
+            base_work_dir=self.local_staging_dir
+        ).individual_dir(normalized)
+        if local_workspace.exists():
+            shutil.rmtree(local_workspace)
+        remote_workspace = self.remote_base_work_dir / self.run_id / normalized
+        cleanup_context = ExecutionContext(base_work_dir=self.local_staging_dir)
+        cleanup_context.run_command(
+            (
+                *self._ssh_command,
+                self._ssh_target,
+                f"rm -rf -- {shlex.quote(str(remote_workspace))}",
+            ),
+            timeout=self.transfer_timeout,
         )
 
     def checkpoint_signature(self) -> Mapping[str, Any]:

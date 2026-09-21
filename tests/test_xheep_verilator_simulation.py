@@ -123,6 +123,35 @@ def test_xheep_commands_run_in_core_v_mini_mcu_conda_environment(tmp_path) -> No
     assert "application_name" not in task.__dataclass_fields__
 
 
+def test_xheep_cache_inputs_ignore_artifact_storage_provenance(tmp_path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    artifact = make_artifact(source_dir)
+    cached_artifact = artifact.for_cache(tmp_path / "cache")
+    individual = Individual.from_slots(
+        id="individual",
+        scenario="scenario",
+        design={"system": {}},
+        slots=[StageChoice(slot=0, stage="nop")],
+    )
+    common = {
+        "individual": individual,
+        "step_id": "xheep_verilator_simulation",
+        "composer": make_composer(),
+    }
+
+    original_inputs = XHeepVerilatorSimulationTask(
+        **common,
+        hls_artifact=artifact,
+    ).cache_inputs()
+    cached_inputs = XHeepVerilatorSimulationTask(
+        **common,
+        hls_artifact=cached_artifact,
+    ).cache_inputs()
+
+    assert original_inputs == cached_inputs
+
+
 def test_xheep_checkout_preserves_external_software_build_symlink(tmp_path) -> None:
     source = tmp_path / "GEN-HEEP"
     vendor_build = source / "hw/vendor/x-heep/sw/build"

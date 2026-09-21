@@ -33,9 +33,9 @@ static inline uint64_t genio_read_cycles(void) {
     do {                                                                   \
         const uint64_t genio_perf_end = genio_read_cycles();               \
         printf(                                                            \
-            "GENIO_PERF:%s:%llu\n",                                      \
+            "GENIO_PERF:%s:%lu\n",                                       \
             #name,                                                         \
-            (unsigned long long)(genio_perf_end - genio_perf_start_##name) \
+            (unsigned long)(genio_perf_end - genio_perf_start_##name)      \
         );                                                                 \
     } while (0)
 

@@ -4,6 +4,7 @@ import importlib.util
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Callable
 
@@ -89,6 +90,8 @@ class PythonImageFunctionalTask(EvaluationTask):
         composer: Composer used to materialize the executable Python package.
         images_path: Directory containing the input image dataset.
         references_path: Optional directory containing ground-truth images.
+        rows: Optional input height applied before executing the pipeline.
+        cols: Optional input width applied before executing the pipeline.
         metrics: Ordered names of mask or instance metrics to calculate.
         metadata: Additional task metadata, including upstream artifact names.
     """
@@ -131,13 +134,27 @@ class PythonImageFunctionalTask(EvaluationTask):
     composer: Composer | None = None
     images_path: Path | None = None
     references_path: Path | None = None
+    rows: int | None = None
+    cols: int | None = None
     metrics: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def cache_inputs(self) -> Mapping[str, Any]:
         """Cache functional results by the semantic image pipeline only."""
 
-        return {"pipeline": self._pipeline_cache_inputs()}
+        return {
+            "pipeline": self._pipeline_cache_inputs(),
+            "composer": (
+                self.composer.checkpoint_signature()
+                if self.composer is not None
+                else None
+            ),
+            "images_path": str(self.images_path),
+            "references_path": str(self.references_path),
+            "rows": self.rows,
+            "cols": self.cols,
+            "metrics": self.metrics,
+        }
 
     def run(self, context: ExecutionContext) -> list[Artifact]:
         """Execute the composed pipeline over the configured image dataset.
@@ -296,6 +313,8 @@ class PythonImageFunctionalTask(EvaluationTask):
             metadata={
                 "metrics": self.metrics,
                 "box_iou_threshold": self._BOX_IOU_THRESHOLD,
+                "input_rows": self.rows,
+                "input_cols": self.cols,
             },
         )
 
@@ -326,6 +345,15 @@ class PythonImageFunctionalTask(EvaluationTask):
             raise ValueError("PythonImageFunctionalTask requires a composer.")
         if self.images_path is None:
             raise ValueError("PythonImageFunctionalTask requires images_path.")
+        if (self.rows is None) != (self.cols is None):
+            raise ValueError("rows and cols must be configured together.")
+        for name, value in (("rows", self.rows), ("cols", self.cols)):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, Integral)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be a positive integer or None.")
 
         images_path = context.resolve_path(self.images_path)
         if not images_path.is_dir():
@@ -456,7 +484,7 @@ class PythonImageFunctionalTask(EvaluationTask):
         for sample in samples:
             start = time.perf_counter()
             try:
-                image = self._read_image(sample.image_path)
+                image = self._resize_input_image(self._read_image(sample.image_path))
                 output = runner(image)
                 output_path = outputs_dir / f"{sample.id}.png"
                 self._write_image(output_path, output)
@@ -526,6 +554,28 @@ class PythonImageFunctionalTask(EvaluationTask):
             raise ValueError(f"Could not read image: {path}.")
         return image
 
+    def _resize_input_image(self, image: Any) -> Any:
+        """Resize a pipeline input to the configured HLS geometry."""
+
+        if self.rows is None or self.cols is None:
+            return image
+        import cv2 as cv
+
+        return cv.resize(image, (self.cols, self.rows), interpolation=cv.INTER_AREA)
+
+    def _resize_reference_image(self, image: Any) -> Any:
+        """Resize a reference to the initial geometry without mixing labels."""
+
+        if self.rows is None or self.cols is None:
+            return image
+        import cv2 as cv
+
+        return cv.resize(
+            image,
+            (self.cols, self.rows),
+            interpolation=cv.INTER_NEAREST,
+        )
+
     @staticmethod
     def _write_image(path: Path, image: Any) -> None:
         import cv2 as cv
@@ -554,7 +604,11 @@ class PythonImageFunctionalTask(EvaluationTask):
                 continue
 
             prediction = self._binary_mask(self._read_image(execution.output_path))
-            reference = self._binary_mask(self._read_image(execution.sample.reference_path))
+            reference = self._binary_mask(
+                self._resize_reference_image(
+                    self._read_image(execution.sample.reference_path)
+                )
+            )
             if prediction.shape != reference.shape:
                 # Nearest-neighbor interpolation preserves discrete reference labels.
                 reference = self._resize_mask(reference, prediction.shape)
@@ -850,6 +904,8 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
     composer: Composer | None = None
     images_path: Path | None = None
     references_path: Path | None = None
+    rows: int | None = None
+    cols: int | None = None
     metrics: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     task_type: type[EvaluationTask] = PythonImageFunctionalTask
@@ -887,6 +943,8 @@ class PythonImageFunctionalEvaluationStep(EvaluationStep):
             composer=self.composer,
             images_path=self.images_path,
             references_path=self.references_path,
+            rows=self.rows,
+            cols=self.cols,
             metrics=self.metrics,
             metadata={
                 **dict(self.metadata),

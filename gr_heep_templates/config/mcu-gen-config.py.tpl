@@ -104,16 +104,20 @@ def config():
 
 
 def gr_heep_config():
-    ext_xbar_nmasters = 0
+    ext_xbar_nmasters = 1
     ext_xbar_slaves = {}
     ext_periph = {
         "SAFA": {
-            "offset": @SAFA_OFFSET@,
-            "length": @SAFA_LENGTH@,
+            "offset": 0x00000000,
+            "length": 0x00001000,
+        },
+        "OBI_Traffic_Generator": {
+            "offset": 0x00001000,
+            "length": 0x00001000,
         }
     }
     ao_spc_num = 1
-    external_interrupts = 1
+    external_interrupts = 2
     hw_fifo_channels = @HW_FIFO_CHANNELS@
 
     slaves = []

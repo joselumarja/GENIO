@@ -548,6 +548,7 @@ Ejemplo:
 ```python
 from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from typing import Any
 from genio import MetricArtifact
 
@@ -560,6 +561,10 @@ class ReportMetrics(MetricArtifact):
 
     def metrics(self) -> Mapping[str, float]:
         return self.values
+
+    def for_cache(self, target_dir):
+        # No contiene paths; una copia profunda es suficiente.
+        return deepcopy(self)
 ```
 
 Si este artefacto lo devuelve un step con id `hls`, las metricas se agregan como:
@@ -578,6 +583,26 @@ Reglas importantes:
 - Las claves duplicadas provocan `EvaluationExecutionError`.
 - Los artefactos no metricos no aparecen en `Result`.
 - Los artefactos no metricos solo sirven para steps posteriores o persistencia externa futura.
+
+### Persistencia En Cache
+
+`OptimizationSession` elimina por defecto los workspaces al cerrar cada batch. Para que
+una entrada sobreviva, todo `Artifact` cacheable implementa:
+
+```python
+def for_cache(self, target_dir: Path) -> Artifact:
+    ...
+```
+
+- Un artifact en memoria devuelve una copia independiente.
+- Un artifact file-backed copia solo sus payloads necesarios bajo `target_dir` y devuelve
+  otra instancia con paths rebindeados.
+- La implementacion base falla de forma segura, porque no puede inferir paths ocultos en
+  metadata.
+- `LFUArtifactCache(storage_dir=...)` mantiene esos payloads fuera de los workspaces.
+- Una expulsion se elimina fisicamente mediante `prune()` al terminar el batch, no mientras
+  un step downstream podria seguir usando el artifact.
+- `keep_all_individuals=True` conserva workspaces completos para depuracion.
 
 ## 4. Extender Tareas Ejecutables
 
@@ -1077,6 +1102,119 @@ class MetricHistory(StatisticsCollector):
 `objective.<name>.*` para los valores raw, orientados y normalizados. El manifest
 incluye la firma del conjunto objetivo y el summary agrega estadisticas objetivas.
 Este CSV/JSON es el lugar previsto para analisis historico a posteriori.
+
+Cuando una sesion necesita varios destinos, `CompositeStatisticsCollector` propaga
+todos los hooks en orden y mantiene snapshots y estados sin mezclar claves:
+
+```python
+from genio import (
+    CompositeStatisticsCollector,
+    CSVStatisticsCollector,
+    InMemoryStatistics,
+)
+
+statistics = CompositeStatisticsCollector((
+    CSVStatisticsCollector("results"),
+    InMemoryStatistics(),
+))
+```
+
+La entrega es fail-fast: si un collector falla, los collectors posteriores no reciben
+ese evento. El checkpoint compuesto solo esta disponible cuando todos sus hijos lo
+soportan; configuracion y estado preservan el orden declarado.
+
+Para el caso habitual CSV + analisis poblacional se recomienda la fachada:
+
+```python
+from genio import PopulationPlotConfig, PopulationStatisticsCollector
+
+statistics = PopulationStatisticsCollector(
+    "results",
+    plots=PopulationPlotConfig(
+        every_batches=5,
+        tracked_genes=(0, 2, 4),
+    ),
+)
+```
+
+Esta fachada expone `csv_collector` y `analysis_collector` para configuracion avanzada,
+y devuelve un snapshot con claves separadas `csv` y `analysis`.
+
+La fachada soporta checkpoints. El collector poblacional persiste solo indices de
+batches y best IDs; records y snapshots se reconstruyen desde los `EvaluatedBatch`
+autoritativos de `OptimizationSession`. Figuras e imagenes nunca se serializan: los
+plots intermedios/finales y ambos JSON se regeneran al restaurar.
+
+Los collectors orientados a poblaciones pueden usar los modelos inmutables de
+`genio.statistics` sin depender del CSV:
+
+```python
+record = PopulationRecord.from_proposal(proposal)
+record = record.with_evaluation(evaluated_individual)
+snapshot = PopulationSnapshot(batch_index, records)
+```
+
+`PopulationRecord` conserva la ocurrencia mediante `proposal_id`, genotipo, stages,
+parametros, design, metadata algoritmica, estado, objetivos raw y score agregado.
+`PopulationSnapshot` exige posiciones contiguas de un mismo batch y expone vistas de
+registros evaluados, objetivos validos y genotipos disponibles.
+
+`PopulationAnalysisCollector(output_dir)` construye estos modelos directamente desde
+los hooks. Valida el orden `batch started -> proposals -> evaluated batch -> batch
+completed`, correlaciona por `proposal_id` y conserva al finalizar los IDs devueltos por
+`algorithm.best_individuals()`. Al completar la sesion escribe el resumen numerico,
+manifest y graficos finales. `every_batches=N` habilita snapshots intermedios.
+
+Los calculos reutilizables viven en `genio.statistics.population_analysis` y no
+dependen del renderer. Incluyen frecuencias de stages/genes/parametros, entropia,
+ratio de genotipos unicos, distancia Hamming, resumen de objetivos y scores, tasa de
+fallos, one-hot categorico, PCA y matrices de los individuos seleccionados:
+
+```python
+entropy = gene_entropy(snapshot)
+distance = mean_pairwise_hamming_distance(snapshot)
+objectives = objective_summary_by_batch(collector.snapshots)
+projection = project_population_pca(collector.records)
+```
+
+La PCA nunca usa `search_index` como coordenada: codifica cada valor de gen como una
+categoria para no introducir distancias artificiales entre indices mixed-radix.
+
+`PopulationPlotRenderer` convierte esos calculos en graficos headless mediante
+Matplotlib Agg. En esta fase se invoca explicitamente sobre los snapshots capturados:
+
+```python
+renderer = PopulationPlotRenderer(PopulationPlotConfig(
+    tracked_genes=(0, 2, 4),
+    image_format="png",
+    strict=False,
+))
+result = renderer.render(
+    collector.snapshots,
+    best_individual_ids=collector.best_individual_ids,
+    target_dir="results/analysis/plots/final",
+)
+```
+
+El resultado distingue `generated`, `skipped` y `warnings`. Se generan composicion,
+diversidad, PCA, evolucion de objetivos/score, fallos, dispersion de dos objetivos y
+genes seleccionados. Un grafico sin datos aplicables se omite; con `strict=False`, un
+fallo de renderizado no oculta los demas graficos.
+
+Salida automatica del collector:
+
+```text
+analysis/
+├── analysis_summary.json
+├── analysis_manifest.json
+└── plots/
+    ├── final/
+    └── batch_000000/
+```
+
+`analysis_summary.json` contiene diversidad, fallos, objetivos, scores y distribucion
+final de stages. El manifest usa rutas relativas y conserva graficos omitidos y warnings.
+Los JSON se reemplazan atomicamente y rechazan `NaN`/`Infinity`.
 
 ## 11. Montar Una Sesion Completa
 

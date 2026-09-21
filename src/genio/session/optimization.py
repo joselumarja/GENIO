@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 import warnings
 from typing import Any
 from uuid import uuid4
@@ -68,6 +69,7 @@ class OptimizationSession:
         artifact_cache: ArtifactCache | None = None,
         checkpoint_policy: CheckpointPolicy | None = None,
         objective_set: ObjectiveSet | None = None,
+        keep_all_individuals: bool = False,
     ) -> None:
         """Configure an optimization session without starting it.
 
@@ -88,11 +90,33 @@ class OptimizationSession:
             checkpoint_policy: Optional persistence and restoration policy.
             objective_set: Objective definitions and transformation strategies.
                 Algorithms that do not consume objectives may omit it.
+            keep_all_individuals: Keep completed individual workspaces on disk.
+                Defaults to ``False`` and cleans them after each committed batch.
 
         Note:
             Checkpoint compatibility is validated when :meth:`run` starts. Active
             artifact caching and checkpointing cannot currently be combined.
         """
+        if not isinstance(keep_all_individuals, bool):
+            raise TypeError("keep_all_individuals must be a boolean.")
+        if artifact_cache is not None:
+            cache_storage = getattr(artifact_cache, "storage_dir", None)
+            backend_storage = getattr(
+                backend,
+                "base_work_dir",
+                getattr(backend, "local_staging_dir", None),
+            )
+            if cache_storage is not None and backend_storage is not None:
+                try:
+                    Path(cache_storage).resolve().relative_to(
+                        Path(backend_storage).resolve()
+                    )
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError(
+                        "artifact cache storage_dir must be outside the backend workspace."
+                    )
         self.id = id or search_space.scenario_id
         self.run_id = run_id or uuid4().hex
         self._configured_run_id = run_id
@@ -110,6 +134,7 @@ class OptimizationSession:
         self.metadata = metadata or {}
         self.checkpoint_policy = checkpoint_policy
         self.objective_set = objective_set
+        self.keep_all_individuals = keep_all_individuals
         self._objective_runtime = (
             objective_set.bind() if objective_set is not None else None
         )
@@ -240,6 +265,11 @@ class OptimizationSession:
                         and self._checkpoint_store.should_save(self._next_batch_index)
                     ):
                         self._persist_checkpoint(status="running")
+                    if not self.keep_all_individuals:
+                        for individual in individuals:
+                            self.backend.cleanup_individual_workspace(individual.id)
+                    if self.artifact_cache is not None:
+                        self.artifact_cache.prune()
                 finally:
                     self._batch_in_progress = False
 

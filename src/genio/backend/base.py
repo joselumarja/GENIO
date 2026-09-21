@@ -154,6 +154,12 @@ class Backend(ABC):
         The base implementation has no resources to release.
         """
 
+    def cleanup_individual_workspace(self, individual_id: str) -> None:
+        """Remove one completed individual's workspace when supported.
+
+        Backends that do not own filesystem workspaces may keep this no-op.
+        """
+
     def __enter__(self) -> "Backend":
         """Return this backend as a managed resource."""
 

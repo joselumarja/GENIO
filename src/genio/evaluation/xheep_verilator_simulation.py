@@ -128,15 +128,23 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             "hls_design": self.individual.design.get("hls", {}),
             "system_design": self.individual.design.get("system", {}),
             "hls_rtl": {
+                "origin": self.hls_artifact.origin,
                 "top_function": self.hls_artifact.top_function,
                 "verilog": tuple(
                     (path.name, self._sha256(path))
                     for path in self.hls_artifact.verilog_paths
                 ),
-                "metadata": dict(self.hls_artifact.metadata),
+                "vhdl": tuple(
+                    (path.name, self._sha256(path))
+                    for path in self.hls_artifact.vhdl_paths
+                ),
             },
             "composer": self._require_gr_heep_composer().checkpoint_signature(),
-            "input_image_path": str(self.input_image_path),
+            "input_image": (
+                (self.input_image_path.name, self._sha256(self.input_image_path))
+                if self.input_image_path is not None
+                else None
+            ),
             "application_name": self.application_name,
             "conda_environment": self.conda_environment,
             "conda_tool": self.conda_tool,

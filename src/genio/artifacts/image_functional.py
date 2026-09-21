@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 
 from genio.artifacts.base import MetricArtifact
@@ -20,6 +21,12 @@ class ImageFunctionalMetricsArtifact(MetricArtifact):
     def metrics(self) -> Mapping[str, float]:
         """Return the aggregate image evaluation metrics."""
         return self.values
+
+    def for_cache(self, target_dir) -> "ImageFunctionalMetricsArtifact":
+        """Return an independent copy because this artifact has no disk payload."""
+
+        del target_dir
+        return deepcopy(self)
 
 
 __all__ = ["ImageFunctionalMetricsArtifact"]

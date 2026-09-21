@@ -80,3 +80,15 @@ def test_metric_artifact_requires_metrics_method():
 def test_artifact_error_is_available_for_custom_artifacts():
     with pytest.raises(ArtifactError, match="custom failure"):
         raise ArtifactError("custom failure")
+
+
+def test_custom_artifact_must_opt_in_to_cache_persistence(tmp_path):
+    artifact = TextArtifact(
+        name="report",
+        producer="TestEvaluator",
+        individual_id="individual_001",
+        content="result=ok\n",
+    )
+
+    with pytest.raises(ArtifactError, match="must implement for_cache"):
+        artifact.for_cache(tmp_path)

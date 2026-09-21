@@ -114,7 +114,22 @@ class ExecutionContext:
         """Return a path below the task's individual and step workspace."""
 
         step_id = task.step_id or "task"
-        return self.base_work_dir.joinpath(task.individual.id, step_id, *parts)
+        workspace = self.individual_dir(task.individual.id) / _workspace_segment(
+            step_id, "step_id"
+        )
+        target = workspace.joinpath(*parts).resolve()
+        try:
+            target.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError("Task workspace path escapes its step directory.") from exc
+        return target
+
+    def individual_dir(self, individual_id: str) -> Path:
+        """Return a validated individual workspace below ``base_work_dir``."""
+
+        return self.base_work_dir.resolve() / _workspace_segment(
+            individual_id, "individual_id"
+        )
 
     def artifact_path(self, task: EvaluationTask, *parts: str | Path) -> Path:
         """Return a path within a task's artifact directory."""
@@ -456,3 +471,15 @@ class EvaluationTask(ABC):
         Returns:
             Artifacts produced by the task for downstream steps and metrics.
         """
+
+
+def _workspace_segment(value: object, name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or Path(value).is_absolute()
+        or len(Path(value).parts) != 1
+    ):
+        raise ValueError(f"{name} must be a safe workspace path segment.")
+    return value

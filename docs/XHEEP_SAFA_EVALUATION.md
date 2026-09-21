@@ -126,9 +126,11 @@ en el build vendorizado y los targets de simulación lo consumen mediante `sw/bu
 - `genio_app_config.h` con tamaños derivados del artefacto HLS.
 - `main.h` con la imagen de entrada embebida.
 
-Si se proporciona `input_image_path`, el composer carga la imagen con OpenCV, la
-redimensiona a las dimensiones de entrada HLS y empaqueta sus píxeles BGR en palabras
-little-endian de 32 bits. Sin imagen se utiliza un patrón sintético determinista.
+Si se proporciona `input_image_path`, el composer selecciona el modo OpenCV desde
+`artifact.metadata["input_type"]`: `XF_8UC1` carga grayscale y `XF_8UC3` carga BGR.
+Después redimensiona y empaqueta los bytes en palabras little-endian de 32 bits,
+validando canales, tipo `uint8` y `input_words`. Sin imagen se utiliza un patrón
+sintético determinista; otros tipos XF se rechazan explícitamente.
 La plantilla seleccionada decide si esas palabras se enlazan en SRAM o en una seccion
 flash-only; esta eleccion no se codifica en el individuo ni en la task.
 
@@ -200,8 +202,8 @@ SAFA expone por MMIO:
 | `safa_input_words` | Palabras aceptadas por SAFA. |
 | `safa_output_words` | Palabras extraídas de SAFA. |
 
-El firmware también informa `traffic_words`, `traffic_checksum`, ciclos de aplicación
-y estado final. Las variantes con SPI añaden metricas de bytes, offsets y ciclos de
+El firmware también informa ciclos de aplicación y estado final. Las variantes con SPI
+añaden metricas de bytes, offsets y ciclos de
 lectura o escritura flash sin cambiar las etiquetas comunes de SAFA.
 
 ## Formato De Log Y Métricas
@@ -212,7 +214,6 @@ El firmware emite líneas estables:
 GENIO_PERF:application:43807
 GENIO_METRIC:safa_active_cycles:43807
 GENIO_METRIC:safa_input_stall_cycles:120
-GENIO_METRIC:traffic_words:1024
 GENIO_STATUS:0
 ```
 

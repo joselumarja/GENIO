@@ -148,6 +148,7 @@ OptimizationSession(
     artifact_cache: ArtifactCache | None = None,
     checkpoint_policy: CheckpointPolicy | None = None,
     objective_set: ObjectiveSet | None = None,
+    keep_all_individuals: bool = False,
 )
 ```
 
@@ -1291,9 +1292,19 @@ HLS: pipeline + design.hls
 X-HEEP: pipeline + design.hls + design.system + RTL HLS + configuración GR-HEEP
 ```
 
-`LFUArtifactCache` separa capacidades por `step.id`, expulsa la entrada con menor frecuencia y usa recencia como desempate. Los misses equivalentes de un mismo batch se agrupan y ejecutan mediante un unico representante.
+`LFUArtifactCache` separa capacidades por `step.id`, expulsa la entrada con menor frecuencia y usa recencia como desempate. Los misses equivalentes de un mismo batch se agrupan y ejecutan mediante un unico representante. `storage_dir` configura el directorio dedicado a payloads cacheados; si se omite se crea uno temporal.
 
-Los artifacts recuperados se clonan mediante `Artifact.for_individual()` y conservan referencias inmutables al payload original. Los fallos no se almacenan.
+Antes de publicar una entrada, la cache llama `Artifact.for_cache(target_dir)`. Los
+artifacts file-backed copian reports, RTL o logs y rebindean sus paths; un artifact
+personalizado debe implementar explicitamente esta operacion. Los hits se clonan mediante
+`Artifact.for_individual()` y nunca dependen del workspace del productor. Los fallos no
+se almacenan.
+
+Por defecto `OptimizationSession(keep_all_individuals=False)` elimina workspaces al cerrar
+cada batch, despues de statistics/checkpoint y de todos los steps downstream.
+`keep_all_individuals=True` conserva el comportamiento de depuracion. La expulsion LFU es
+logica durante el batch; `prune()` elimina payloads retirados al alcanzar la frontera
+segura de batch.
 
 Telemetria:
 
@@ -1323,6 +1334,7 @@ on_session_started(session: OptimizationSession) -> None
 on_batch_started(batch_index: int, individuals: Sequence[Individual]) -> None
 on_proposals_generated(proposals: Sequence[Proposal]) -> None
 on_evaluation_completed(evaluation: Evaluation) -> None
+on_evaluated_batch(batch: EvaluatedBatch) -> None
 on_batch_completed(batch_index: int, evaluations: Sequence[Evaluation]) -> None
 on_session_completed(result: SearchResult) -> None
 snapshot() -> dict[str, Any]
@@ -1358,6 +1370,74 @@ run_summary.json
 ```
 
 El CSV contiene representaciones JSON canonicas de genotype, pipeline, design y metadata, ademas de columnas promovidas para slots, dominios de diseño, metadata algorítmica y metricas.
+
+### `CompositeStatisticsCollector`
+
+Ubicacion: `src/genio/statistics/composite.py`
+
+Agrupa una secuencia no vacia de collectors y propaga cada hook en orden estable. Sus
+snapshots se almacenan en entradas independientes para evitar colisiones de nombres.
+Solo soporta checkpoint cuando todos los collectors hijos lo soportan y restaura sus
+estados en el mismo orden declarado.
+
+```python
+statistics = CompositeStatisticsCollector((
+    CSVStatisticsCollector("results"),
+    InMemoryStatistics(),
+))
+```
+
+### `PopulationStatisticsCollector`
+
+Ubicacion: `src/genio/statistics/population_statistics.py`
+
+Fachada recomendada para generar en una sola configuracion el CSV, manifest y summary
+del run junto con el analisis y plots poblacionales. Internamente compone
+`CSVStatisticsCollector(output_dir)` y
+`PopulationAnalysisCollector(output_dir / "analysis")`; su snapshot separa las claves
+`csv` y `analysis` y permite acceder directamente a ambos collectors hijos.
+
+### `PopulationRecord` y `PopulationSnapshot`
+
+Ubicacion: `src/genio/statistics/population_models.py`
+
+Modelos inmutables para collectors poblacionales. Un record se crea desde una
+`Proposal` y se completa desde el `EvaluatedIndividual` con el mismo `proposal_id`.
+El snapshot agrupa una poblacion cerrada, ordenada por `batch_position`, sin imponer
+que todos los algoritmos interpreten un batch como generacion.
+
+### `PopulationAnalysisCollector`
+
+Ubicacion: `src/genio/statistics/population.py`
+
+Captura propuestas, resultados objetivos y cierres de batch para construir snapshots
+inmutables. La correlacion usa `proposal_id`, por lo que preserva ocurrencias repetidas.
+Al completar la sesion guarda los IDs seleccionados por el algoritmo y genera
+`analysis_summary.json`, `analysis_manifest.json` y `plots/final`. Una cadencia
+`every_batches` opcional genera tambien directorios `plots/batch_*`. El checkpoint
+persiste solo indices de batches y best IDs; records/snapshots se reconstruyen desde el
+historico de sesion y los archivos de salida se regeneran, sin serializar figuras.
+
+### Analisis Poblacional Puro
+
+Ubicacion: `src/genio/statistics/population_analysis.py`
+
+Proporciona funciones deterministas sobre snapshots para composicion, diversidad,
+convergencia, proyeccion y comparacion de individuos seleccionados. La diversidad usa
+entropia y distancia Hamming normalizada; la proyeccion usa PCA sobre codificacion
+one-hot de genes categoricos. `NumericSummary` representa count, extremos, media,
+mediana y cuartiles sin depender de Matplotlib ni del collector.
+
+### `PopulationPlotRenderer`
+
+Ubicacion: `src/genio/statistics/population_plots.py`
+
+Renderer headless usado automaticamente por `PopulationAnalysisCollector` y disponible
+tambien para uso directo. `PopulationPlotConfig` controla genes seguidos, formato
+PNG/SVG, plots finales, cadencia intermedia y politica strict.
+`PopulationPlotResult` separa archivos generados, graficos omitidos por falta de datos
+y warnings recuperables. El modulo importa Matplotlib de forma diferida y no forma
+parte del lifecycle del collector hasta la siguiente fase.
 
 ## Diagrama De Relaciones
 

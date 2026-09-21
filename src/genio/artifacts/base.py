@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
+from pathlib import Path
 from typing import Any, Sequence
 
 
@@ -84,6 +85,19 @@ class Artifact(ABC):
             raise ArtifactError(
                 f"Artifact type {type(self).__name__} cannot be rebound for caching."
             ) from exc
+
+    def for_cache(self, target_dir: str | Path) -> "Artifact":
+        """Return a cache-owned copy whose payload survives workspace cleanup.
+
+        Concrete artifacts must opt in explicitly because filesystem references
+        may be stored in arbitrary fields or metadata and cannot be inferred
+        safely from :meth:`load`.
+        """
+
+        del target_dir
+        raise ArtifactError(
+            f"Artifact type {type(self).__name__} must implement for_cache()."
+        )
 
 
 @dataclass(frozen=True, slots=True)

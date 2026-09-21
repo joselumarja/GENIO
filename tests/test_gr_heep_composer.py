@@ -81,7 +81,7 @@ def test_gr_heep_composer_renders_configuration_and_application_overlay() -> Non
     assert "dma_launch(&accelerator_transaction)" in package.files[
         f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
-    assert "dma_launch(&traffic_transaction)" in package.files[
+    assert "dma_launch(&traffic_transaction)" not in package.files[
         f"{DEFAULT_APPLICATION_ROOT}/main.c"
     ]
     assert '#include "gr_heep.h"' in package.files[
@@ -96,13 +96,13 @@ def test_gr_heep_composer_renders_configuration_and_application_overlay() -> Non
     assert "UNBOUND_EXAMPLE" not in package.metadata["rendered_configuration"]
 
 
-def test_gr_heep_composer_renders_mem_to_flash_application_overlay() -> None:
+def test_gr_heep_composer_renders_flash_to_memory_application_overlay() -> None:
     package = make_composer(
-        application_name="genio_trans_mem_flash",
+        application_name="genio_trans_flash_mem",
         application_defaults={"FLASH_OUTPUT_OFFSET": "0x00900000"},
     ).compose(make_individual())
 
-    application_root = "sw/applications/genio_trans_mem_flash"
+    application_root = "sw/applications/genio_trans_flash_mem"
     assert {
         f"{application_root}/genio_app_config.h",
         f"{application_root}/genio_perf.h",
@@ -112,7 +112,7 @@ def test_gr_heep_composer_renders_mem_to_flash_application_overlay() -> None:
     assert "#define GENIO_FLASH_OUTPUT_OFFSET 0x00900000" in package.files[
         f"{application_root}/genio_app_config.h"
     ]
-    assert "accelerator_source.ptr = (uint8_t *)image_input" in package.files[
+    assert "accelerator_source.ptr = (uint8_t *)rx_fifo" in package.files[
         f"{application_root}/main.c"
     ]
     assert "accelerator_destination.ptr = (uint8_t *)image_output" in package.files[
@@ -121,6 +121,7 @@ def test_gr_heep_composer_renders_mem_to_flash_application_overlay() -> None:
     assert "w25q128jw_erase_and_write_standard" in package.files[
         f"{application_root}/main.c"
     ]
+    assert "traffic_transaction" not in package.files[f"{application_root}/main.c"]
     assert "@" not in package.files[f"{application_root}/genio_app_config.h"]
     assert "@" not in package.files[f"{application_root}/main.c"]
 
@@ -521,6 +522,7 @@ def test_gr_heep_composer_embeds_dataset_image_in_main_header(tmp_path) -> None:
         verilog_paths=(top_path,),
         metadata={
             "interface": "safa_fifo",
+            "input_type": "XF_8UC3",
             "input_rows": 1,
             "input_cols": 2,
             "output_rows": 1,
@@ -538,6 +540,82 @@ def test_gr_heep_composer_embeds_dataset_image_in_main_header(tmp_path) -> None:
     header = overlay[f"{DEFAULT_APPLICATION_ROOT}/main.h"]
     assert "0x04030201u, 0x00000605u," in header
     assert "@IMAGE_WORDS@" not in header
+
+
+def test_gr_heep_composer_embeds_grayscale_image_in_main_header(tmp_path) -> None:
+    cv = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    image_path = tmp_path / "grayscale.png"
+    assert cv.imwrite(
+        str(image_path),
+        np.array([[1, 2, 3, 4]], dtype=np.uint8),
+    )
+    top_path = tmp_path / "top.v"
+    top_path.write_text("module top; endmodule\n", encoding="utf-8")
+    artifact = HLSRTLArtifact(
+        name="rtl_hls_synthesis",
+        producer="hls_image_pipeline_synthesis",
+        individual_id="individual",
+        origin="hls_synthesis",
+        top_function="top",
+        verilog_paths=(top_path,),
+        metadata={
+            "interface": "safa_fifo",
+            "input_type": "XF_8UC1",
+            "input_rows": 1,
+            "input_cols": 4,
+            "output_rows": 1,
+            "output_cols": 4,
+            "input_words": 1,
+            "output_words": 1,
+        },
+    )
+
+    overlay = make_composer().render_hls_artifact_overlay(
+        artifact,
+        image_path=image_path,
+    )
+
+    header = overlay[f"{DEFAULT_APPLICATION_ROOT}/main.h"]
+    assert "0x04030201u," in header
+    assert "@IMAGE_WORDS@" not in header
+
+
+@pytest.mark.parametrize("input_type", ("XF_16UC1", "XF_8UC4", "unknown"))
+def test_gr_heep_composer_rejects_unsupported_firmware_image_type(
+    tmp_path,
+    input_type,
+) -> None:
+    cv = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    image_path = tmp_path / "sample.png"
+    assert cv.imwrite(str(image_path), np.zeros((1, 4), dtype=np.uint8))
+    top_path = tmp_path / "top.v"
+    top_path.write_text("module top; endmodule\n", encoding="utf-8")
+    artifact = HLSRTLArtifact(
+        name="rtl_hls_synthesis",
+        producer="hls_image_pipeline_synthesis",
+        individual_id="individual",
+        origin="hls_synthesis",
+        top_function="top",
+        verilog_paths=(top_path,),
+        metadata={
+            "interface": "safa_fifo",
+            "input_type": input_type,
+            "input_rows": 1,
+            "input_cols": 4,
+            "input_words": 1,
+            "output_rows": 1,
+            "output_cols": 4,
+            "output_words": 1,
+        },
+    )
+
+    with pytest.raises(ComposerError, match="Unsupported firmware input image type"):
+        make_composer().render_hls_artifact_overlay(
+            artifact,
+            image_path=image_path,
+        )
 
 
 def test_gr_heep_composer_rejects_non_safa_hls_artifact(tmp_path) -> None:
