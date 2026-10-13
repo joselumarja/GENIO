@@ -57,9 +57,9 @@ VITIS_LIBRARIES_PATH = Path(
     os.environ.get("VITIS_LIBRARIES_PATH", ROOT / "Vitis_Libraries")
 )
 DEFINITIONS_PATH = ROOT / "search_space/stages/definitions"
-HLS_TEMPLATES_PATH = ROOT / "hls_templates/vitis_vision_image_pipeline"
-HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "hls_implementations/include"
-GR_HEEP_TEMPLATES_PATH = ROOT / "gr_heep_templates"
+HLS_TEMPLATES_PATH = ROOT / "use_cases/insect_segmentation/hls_templates/vitis_vision_image_pipeline"
+HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "use_cases/insect_segmentation/hls_templates/vitis_vision_image_pipeline/include"
+GR_HEEP_TEMPLATES_PATH = ROOT / "use_cases/date_experiments/gr_heep_templates"
 OUTPUT_DIR = ROOT / "tmp/insect_xheep_random_search"
 
 MAX_EVALUATIONS = 16

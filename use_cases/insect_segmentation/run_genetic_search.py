@@ -56,8 +56,8 @@ from use_cases.insect_segmentation.hardware_objective import (  # noqa: E402
 
 SCENARIO_PATH = ROOT / "use_cases/insect_segmentation/scenarios/insect_segmentation_pipeline.json"
 DEFINITIONS_PATH = ROOT / "search_space/stages/definitions"
-HLS_TEMPLATES_PATH = ROOT / "hls_templates/vitis_vision_image_pipeline"
-HLS_INCLUDE_PATH = ROOT / "hls_implementations/include"
+HLS_TEMPLATES_PATH = ROOT / "use_cases/insect_segmentation/hls_templates/vitis_vision_image_pipeline"
+HLS_IMPLEMENTATIONS_INCLUDE_PATH = ROOT / "use_cases/insect_segmentation/hls_templates/vitis_vision_image_pipeline/include"
 IMAGES_PATH = Path(os.environ.get(
     "GENIO_IMAGES_PATH", "/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly_Grayscale/Images"
 ))
