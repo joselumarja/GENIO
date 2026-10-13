@@ -19,8 +19,8 @@ class Evaluation:
         metadata: Proposal provenance and session-level evaluation information.
 
     Note:
-        Backend tasks produce artifacts. The :class:`genio.EvaluationExecutor`
-        converts those artifacts into the normalized ``result`` stored here.
+        Task processes produce evaluation outputs. The executor collects their
+        metrics into the normalized ``result`` stored here.
     """
 
     individual: Individual

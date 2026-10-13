@@ -1,6 +1,8 @@
 # Auditoría de stages: funcionalidad y correspondencia HLS/Python
 
-Informe estático generado desde `search_space/stages`.
+Informe estático generado desde el catálogo de stages en
+`search_space/stages` en la raíz del checkout. La comparación histórica
+con headers de Vitis Libraries se conserva tal como fue auditada.
 
 ## `absolute_difference`
 

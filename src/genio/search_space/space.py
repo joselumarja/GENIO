@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import ast
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
@@ -41,9 +41,9 @@ def _square(rows: int, cols: int) -> bool:
 class SearchSpace:
     """Load, index, and sample individuals belonging to one search scenario.
 
-    Stage parameter specifications are expanded eagerly into valid concrete
-    alternatives. A genotype first contains one gene per pipeline slot, followed
-    by one gene per parameter in the ordered design domains. ``search_index`` is
+    Stage parameter specifications, when present, are expanded eagerly into valid
+    concrete alternatives. Genotype genes follow the order of domains in the
+    scenario JSON, with one gene per pipeline slot or design parameter. ``search_index`` is
     the mixed-radix encoding of the complete genotype using each domain length as
     its base.
 
@@ -71,15 +71,14 @@ class SearchSpace:
     def __init__(
         self,
         test_file: str | Path,
-        stages_definitions_path: str | Path,
+        stages_definitions_path: str | Path | None = None,
     ) -> None:
-        """Load a search scenario and its referenced stage definitions.
+        """Load a search scenario
 
         Args:
-            test_file: JSON scenario containing ``id``, ``pipeline``, and
-                optionally ``design_spaces``.
-            stages_definitions_path: Directory whose immediate child directories
-                contain stage definition JSON files.
+            test_file: JSON scenario containing ``id`` and ``design_spaces``.
+            stages_definitions_path: Directory of stage definitions, required only
+                when ``design_spaces.pipeline`` is in file
 
         Raises:
             OSError: If a configuration file cannot be read.
@@ -90,7 +89,7 @@ class SearchSpace:
         """
         self.scenario = self._load_scenario(
             Path(test_file),
-            Path(stages_definitions_path),
+            Path(stages_definitions_path) if stages_definitions_path is not None else None,
         )
         self._next_id = 0
         self.__post_init__()
@@ -100,14 +99,13 @@ class SearchSpace:
         """Create a search space from an already expanded specification.
 
         Args:
-            scenario: Finite scenario whose slot indexes and alternatives should
-                be validated.
+            scenario: Finite scenario whose dimensions should be validated.
 
         Returns:
             A search space with a fresh automatic-ID sequence.
 
         Raises:
-            ValueError: If the scenario has no slots or its slots are malformed.
+            ValueError: If the scenario has no dimensions or its dimensions are malformed.
         """
         search_space = cls.__new__(cls)
         search_space.scenario = scenario
@@ -116,8 +114,19 @@ class SearchSpace:
         return search_space
 
     def __post_init__(self) -> None:
-        if not self.scenario.slots:
-            raise ValueError("SearchSpace requires at least one slot.")
+        if self.scenario.domain_order:
+            order = self.scenario.domain_order
+            if (
+                len(order) != len(set(order))
+                or set(order) - (set(self.scenario.design_spaces) | {"pipeline"})
+                or set(self.scenario.design_spaces) - set(order)
+                or (self.scenario.slots and "pipeline" not in order)
+            ):
+                raise ValueError("Scenario domain order must list each design domain and pipeline once.")
+        if not self.genotype_lengths:
+            raise ValueError("SearchSpace requires at least one search dimension.")
+        if any(length == 0 for length in self.genotype_lengths):
+            raise ValueError("SearchSpace dimensions must have at least one value.")
 
         expected = tuple(range(len(self.scenario.slots)))
         actual = tuple(slot.index for slot in self.scenario.slots)
@@ -157,7 +166,15 @@ class SearchSpace:
     @property
     def genotype_lengths(self) -> tuple[int, ...]:
         """Return the domain length of each genotype position."""
-        return self.slot_lengths + self.design_lengths
+        return tuple(len(values) for _, _, values in self._dimensions())
+
+    @property
+    def slot_gene_positions(self) -> tuple[int, ...]:
+        """Return each pipeline slot's position in the complete genotype."""
+        return tuple(
+            position for position, (domain, _, _) in enumerate(self._dimensions())
+            if domain == "pipeline"
+        )
 
     @property
     def search_space_size(self) -> int:
@@ -173,6 +190,7 @@ class SearchSpace:
         return {
             "scenario_id": self.scenario.id,
             "metadata": self.scenario.metadata,
+            "domain_order": list(self._domain_order()),
             "slots": [
                 {
                     "index": slot.index,
@@ -229,7 +247,7 @@ class SearchSpace:
             metadata: Optional provenance attached to the resulting individual.
 
         Returns:
-            The selected stages and design values as an :class:`Individual`.
+            The selected values for every domain as an :class:`Individual`.
 
         Raises:
             ValueError: If the genotype has the wrong length or a gene lies
@@ -238,23 +256,24 @@ class SearchSpace:
         normalized_genotype = tuple(genotype)
         self._validate_genotype(normalized_genotype)
 
-        slot_genotype = normalized_genotype[: len(self.scenario.slots)]
-        design_genotype = normalized_genotype[len(self.scenario.slots) :]
+        values_result: dict[str, Any] = {}
+        for (domain, name, alternatives), gene in zip(self._dimensions(), normalized_genotype):
+            if domain == "pipeline":
+                values_by_domain = values_result.setdefault("pipeline", [])
+                values_by_domain.append(alternatives[gene])
+            else:
+                values_result.setdefault(domain, {})[name] = alternatives[gene]
 
-        slots = tuple(
-            self.scenario.slots[slot_index].alternatives[gene]
-            for slot_index, gene in enumerate(slot_genotype)
-        )
-        design = self._design_from_genotype(design_genotype)
+        if "pipeline" in values_result:
+            values_result["pipeline"] = tuple(values_result["pipeline"])
 
-        return Individual.from_slots(
+        return Individual(
             id=id or self._new_id(),
             scenario=self.scenario.id,
-            slots=slots,
+            values=values_result,
             genotype=normalized_genotype,
             search_index=self.genotype_to_index(normalized_genotype),
-            design=design,
-            metadata=metadata,
+            metadata=metadata or {},
         )
 
     def from_index(
@@ -282,26 +301,6 @@ class SearchSpace:
             id=id,
             metadata=metadata,
         )
-
-    def from_slots(
-        self,
-        slots: list[StageChoice] | tuple[StageChoice, ...],
-        *,
-        id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Individual:
-        """Create an individual from valid choices in a slot-only scenario.
-
-        This convenience method derives genes only for pipeline slots. Scenarios
-        with additional design dimensions must use :meth:`from_genotype` so that
-        values for those dimensions are explicit.
-
-        Raises:
-            ValueError: If choices are missing, duplicated, invalid for a slot,
-                or do not form the complete genotype expected by the scenario.
-        """
-        genotype = self.slots_to_genotype(tuple(slots))
-        return self.from_genotype(genotype, id=id, metadata=metadata)
 
     def sample(
         self,
@@ -340,8 +339,11 @@ class SearchSpace:
         stages expand to different numbers of alternatives.
         """
         rng = random or Random()
-        genotype = tuple(self._sample_balanced_gene(slot, rng) for slot in self.scenario.slots)
-        genotype += tuple(rng.randrange(length) for length in self.design_lengths)
+        genotype = tuple(
+            self._sample_balanced_gene(self.scenario.slots[name], rng)
+            if domain == "pipeline" else rng.randrange(len(values))
+            for domain, name, values in self._dimensions()
+        )
         return self.from_genotype(genotype, metadata=metadata)
 
     def sample_slot(
@@ -479,6 +481,24 @@ class SearchSpace:
             )
         return self.scenario.slots[slot_index]
 
+    def genes_for_domains(
+        self, genotype: tuple[int, ...], domains: Collection[str]
+    ) -> tuple[int, ...]:
+        """Select genes for the named domains in scenario genotype order.
+
+        Raises:
+            ValueError: If a domain is unknown or the genotype is invalid.
+        """
+        self._validate_genotype(genotype)
+        requested = set(domains)
+        unknown = requested - set(self._domain_order())
+        if unknown:
+            raise ValueError(f"Unknown design domains: {sorted(unknown)!r}.")
+        return tuple(
+            gene for gene, (domain, _, _) in zip(genotype, self._dimensions())
+            if domain in requested
+        )
+
     def genotype_to_index(self, genotype: tuple[int, ...] | list[int]) -> int:
         """Encode a complete genotype as its mixed-radix search-space index.
 
@@ -558,7 +578,7 @@ class SearchSpace:
     def to_index(self, individual: Individual) -> int:
         """Return the validated search-space index of an individual.
 
-        The index is recomputed from slots and design values instead of trusting
+        The index is recomputed from materialized values instead of trusting
         ``individual.search_index``.
         """
         if individual.scenario != self.scenario.id:
@@ -571,15 +591,26 @@ class SearchSpace:
     def to_genotype(self, individual: Individual) -> tuple[int, ...]:
         """Reconstruct and validate the genotype represented by an individual.
 
-        Missing design values use the first value of their domain. If the object
+        Missing parameter values use the first value of their domain. If the object
         already carries a genotype, it must match the reconstructed value.
         """
-        slot_genotype = self.slots_to_genotype(individual.slots)[: len(self.scenario.slots)]
-        genotype = slot_genotype + self._design_to_genotype(individual.design)
+        slot_genotype = self.slots_to_genotype(
+            tuple(individual.values.get("pipeline", ()))
+        )
+        design_genotype = {
+            (domain, name): gene
+            for (domain, name, _), gene in zip(
+                self._design_parameters(), self._design_to_genotype(individual.values)
+            )
+        }
+        genotype = tuple(
+            slot_genotype[name] if domain == "pipeline" else design_genotype[(domain, name)]
+            for domain, name, _ in self._dimensions()
+        )
         if individual.genotype is not None and individual.genotype != genotype:
             raise ValueError(
                 f"Individual genotype {individual.genotype!r} does not match "
-                f"its slots genotype {genotype!r}."
+                f"its materialized values {genotype!r}."
             )
         return genotype
 
@@ -605,24 +636,14 @@ class SearchSpace:
                 f"got {len(genotype)}."
             )
 
-        slot_count = len(self.scenario.slots)
-        for position, (gene, length) in enumerate(zip(genotype, self.genotype_lengths)):
+        for gene, (domain, name, values) in zip(genotype, self._dimensions()):
+            length = len(values)
             if gene < 0 or gene >= length:
-                label = (
-                    f"slot {position}"
-                    if position < slot_count
-                    else f"design parameter {position - slot_count}"
-                )
+                label = f"slot {name}" if domain == "pipeline" else f"{domain}.{name}"
                 raise ValueError(
                     f"Gene {gene} for {label} is out of range "
                     f"[0, {length})."
                 )
-
-    def _design_from_genotype(self, design_genotype: tuple[int, ...]) -> dict[str, Any]:
-        design: dict[str, dict[str, Any]] = {}
-        for (domain, name, values), gene in zip(self._design_parameters(), design_genotype):
-            design.setdefault(domain, {})[name] = values[gene]
-        return design
 
     def _design_parameters(self) -> tuple[tuple[str, str, tuple[Any, ...]], ...]:
         return tuple(
@@ -630,6 +651,26 @@ class SearchSpace:
             for domain, parameters in self.scenario.design_spaces.items()
             for name, values in parameters.items()
         )
+
+    def _domain_order(self) -> tuple[str, ...]:
+        return self.scenario.domain_order or (
+            (("pipeline",) if self.scenario.slots else ())
+            + tuple(self.scenario.design_spaces)
+        )
+
+    def _dimensions(self) -> tuple[tuple[str, int | str, tuple[Any, ...]], ...]:
+        dimensions: list[tuple[str, int | str, tuple[Any, ...]]] = []
+        for domain in self._domain_order():
+            if domain == "pipeline":
+                dimensions.extend(
+                    (domain, slot.index, slot.alternatives) for slot in self.scenario.slots
+                )
+            else:
+                dimensions.extend(
+                    (domain, name, values)
+                    for name, values in self.scenario.design_spaces[domain].items()
+                )
+        return tuple(dimensions)
 
     def _new_id(self) -> str:
         value = self._next_id
@@ -640,28 +681,35 @@ class SearchSpace:
     def _load_scenario(
         cls,
         test_file: Path,
-        stages_definitions_path: Path,
+        stages_definitions_path: Path | None,
     ) -> SearchScenarioSpec:
         """Parse a scenario file and expand every finite search dimension.
 
-        Top-level fields other than ``id``, ``pipeline``, and ``design_spaces``
+        Top-level fields other than ``id`` and ``design_spaces``
         are preserved as scenario metadata for downstream components.
         """
         with test_file.open("r", encoding="utf-8") as file:
             test_config = json.load(file)
 
         scenario_id = test_config["id"]
-        stage_definitions = cls._load_stage_definitions(stages_definitions_path)
+        pipeline = test_config["design_spaces"].get("pipeline", [])
+        if pipeline and stages_definitions_path is None:
+            raise ValueError("Pipeline scenarios require a stages definitions path.")
+        stage_definitions = (
+            cls._load_stage_definitions(stages_definitions_path)
+            if pipeline and stages_definitions_path is not None
+            else {}
+        )
         slots = tuple(
             cls._build_slot_spec(slot_config, stage_definitions)
-            for slot_config in test_config["pipeline"]
+            for slot_config in pipeline
         )
         design_spaces = cls._build_design_spaces(test_config)
 
         metadata = {
             key: value
             for key, value in test_config.items()
-            if key not in {"id", "pipeline", "design_spaces"}
+            if key not in {"id", "design_spaces"}
         }
 
         return SearchScenarioSpec(
@@ -669,6 +717,7 @@ class SearchSpace:
             slots=slots,
             design_spaces=design_spaces,
             metadata=metadata,
+            domain_order=tuple(test_config["design_spaces"]),
         )
 
     @classmethod
@@ -677,6 +726,7 @@ class SearchSpace:
             return {
                 domain: cls._build_design_space(parameters)
                 for domain, parameters in test_config["design_spaces"].items()
+                if domain != "pipeline"
             }
         return {}
 
@@ -691,12 +741,7 @@ class SearchSpace:
     def _load_stage_definitions(
         stages_definitions_path: Path,
     ) -> dict[str, dict[str, Any]]:
-        """Load stage definitions from ``*/*.json`` below a definitions root.
-
-        Definitions are keyed by their JSON ``id``. This method is also the
-        internal loading contract reused by composers so search-space expansion
-        and code generation resolve the same stage definitions.
-        """
+        """Load stage definitions from ``*/*.json`` below a definitions root."""
         definitions: dict[str, dict[str, Any]] = {}
 
         for definition_file in stages_definitions_path.glob("*/*.json"):
@@ -739,12 +784,7 @@ class SearchSpace:
         candidate_config: dict[str, Any],
         stage_definition: dict[str, Any],
     ) -> list[StageChoice]:
-        """Expand one stage candidate into constraint-valid concrete choices.
-
-        Parameter domains are combined using a Cartesian product. For candidates
-        that declare parameters, the stage definition's constraints are evaluated
-        for every combination.
-        """
+        """Expand a candidate into choices satisfying its stage constraints."""
         stage = candidate_config["stage"]
         parameter_specs = candidate_config.get("parameters", {})
         wrapper_inputs = candidate_config.get("wrapper_inputs", {})
@@ -768,7 +808,6 @@ class SearchSpace:
             parameters = dict(zip(parameter_names, values))
             if not cls._satisfies_constraints(parameters, stage_definition):
                 continue
-
             alternatives.append(
                 StageChoice(
                     slot=slot_index,

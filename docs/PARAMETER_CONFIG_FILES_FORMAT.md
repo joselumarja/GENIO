@@ -2,13 +2,13 @@
 
 Este documento describe el formato actual de los archivos JSON usados para definir espacios de búsqueda, escenarios de prueba y valores de parámetros.
 
-Actualmente estos archivos están en:
+Los escenarios de ejemplo de este repositorio están en:
 
 ```text
-search_space/tests/*.json
+use_cases/insect_segmentation/scenarios/*.json
 ```
 
-Aunque la carpeta se llama `tests`, estos JSON no son tests unitarios de Python. Son configuraciones de pipelines candidatos: declaran qué etapas pueden aparecer en cada posición y qué valores puede tomar cada parámetro.
+Estos JSON no son tests unitarios de Python. Son configuraciones de espacios de búsqueda: declaran las decisiones de cada dominio. `pipeline` es opcional y solo se necesita si el problema consiste en seleccionar etapas. Son experimentos del checkout bajo `use_cases/`, no recursos del paquete instalable; las definiciones de stages están en `search_space/stages/definitions` en la raíz del checkout y deben proporcionarse al código instalado.
 
 ---
 
@@ -31,7 +31,7 @@ Un archivo de configuración tiene esta forma:
     "system": {
       "memory_total_kib": {
         "type": "choice",
-      "values": [128, 256, 512]
+        "values": [128, 256, 512]
       },
       "memory_bank_size_kib": {
         "type": "choice",
@@ -41,30 +41,23 @@ Un archivo de configuración tiene esta forma:
         "type": "choice",
         "values": [0, 50]
       }
-    }
-  },
-  "pipeline": [
-    {
-      "slot": 0,
-      "candidates": [
-        {
-          "stage": "bgr_to_hsv"
-        },
-        {
-          "stage": "rgb_to_hsv"
-        }
-      ]
     },
-    {
-      "slot": 1,
-      "candidates": [
-        {
-          "stage": "in_range",
-          "parameters": {}
-        }
-      ]
-    }
-  ]
+    "pipeline": [
+      {
+        "slot": 0,
+        "candidates": [
+          {"stage": "bgr_to_hsv"},
+          {"stage": "rgb_to_hsv"}
+        ]
+      },
+      {
+        "slot": 1,
+        "candidates": [
+          {"stage": "in_range", "parameters": {}}
+        ]
+      }
+    ]
+  }
 }
 ```
 
@@ -75,8 +68,7 @@ Campos de primer nivel:
 | `id` | Sí | Identificador del escenario de configuración. |
 | `description` | No | Descripción humana del escenario. |
 | `resources` | No | Recursos externos disponibles para wrappers o valores cargados. |
-| `design_spaces` | No | Espacios de decisión globales separados por dominio, por ejemplo `hls` o `system`. |
-| `pipeline` | Sí | Lista ordenada de slots del pipeline. |
+| `design_spaces` | Sí | Decisiones discretas por dominio: parámetros y, opcionalmente, slots de `pipeline`. Debe haber al menos una dimensión no vacía. |
 
 ---
 
@@ -134,12 +126,15 @@ Los recursos no se conectan como `interface.inputs`. Se usan como valores cargad
 
 ## 5. Campo `design_spaces`
 
-`design_spaces` declara decisiones globales que forman parte del mismo espacio de búsqueda que el pipeline, pero no pertenecen a una stage concreta.
+`design_spaces` agrupa las decisiones del escenario. La clave opcional `pipeline` contiene slots ordenados; las demás claves son dominios de parámetros discretos que no pertenecen a una stage concreta. Para explorar otros problemas basta con declarar dominios propios, sin `pipeline` ni definiciones de stages.
 
 Ejemplo:
 
 ```json
 "design_spaces": {
+  "pipeline": [
+    {"slot": 0, "candidates": [{"stage": "bgr_to_hsv"}]}
+  ],
   "hls": {
     "pipeline_ii": {
       "type": "choice",
@@ -171,21 +166,22 @@ Ejemplo:
 }
 ```
 
-Cada clave de primer nivel dentro de `design_spaces` es un dominio. Los dominios actuales recomendados son:
+Cada clave de primer nivel dentro de `design_spaces` identifica una parte del diseño. Además de `pipeline`, los dominios de parámetros recomendados son:
 
 | Dominio | Uso |
 |---|---|
+| `pipeline` | Lista ordenada de slots y candidatos de etapas; no es un mapa de parámetros. |
 | `hls` | Parámetros globales para síntesis HLS, como II objetivo, estrategia general de particionado o formato de salida. |
 | `system` | Parámetros de una plataforma o sistema externo, por ejemplo memoria disponible, tipo de MCU o configuración X-HEEP. |
 
-Los dominios tienen objetivos distintos. Un step de síntesis HLS debe consumir `Individual.design["hls"]`; un step de evaluación de sistema debe consumir `Individual.design["system"]`; un step funcional de imagen puede ignorar ambos.
+Los dominios tienen objetivos distintos. `Individual.values` agrupa todas las selecciones: `values["pipeline"]` es una tupla ordenada de `StageChoice` cuando hay pipeline; los demás dominios, como `values["hls"]` o `values["system"]`, son mapas de parámetros. Sin pipeline, esa clave no aparece. Los consumidores de estos datos deben adaptarse a esta representación.
 
-Los parámetros dentro de cada dominio usan los mismos tipos de configuración finitos que `candidate.parameters`: `constant`, `choice`, `integer_range` y `number_range`. `file_ref` y `object_ref` están pensados para `wrapper_inputs`, no para decisiones globales de diseño.
+Los parámetros dentro de los dominios distintos de `pipeline` usan los mismos tipos de configuración finitos que `candidate.parameters`: `constant`, `choice`, `integer_range` y `number_range`. `file_ref` y `object_ref` están pensados para `wrapper_inputs`, no para decisiones globales de diseño.
 
 El individuo generado mantiene estos valores separados:
 
 ```python
-individual.design == {
+individual.values == {
     "hls": {
         "pipeline_ii": 1,
         "array_partition": "complete",
@@ -222,29 +218,33 @@ interleaving con capacidad adicional.
 
 Véase [Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
 
-El genotype y el `search_index` sí representan el espacio completo:
+El genotipo y el `search_index` representan el espacio completo. Los genes siguen el orden de aparición de los dominios en `design_spaces` y, dentro de cada dominio, el orden de sus parámetros o slots. En los escenarios de ejemplo (`hls`, `system`, `pipeline`), el orden es:
 
 ```text
-genes de pipeline + genes de hls + genes de system + ...
+genes de hls + genes de system + genes de pipeline
 ```
+
+Si no hay pipeline, solo aparecen los genes de los demás dominios. Cambiar el orden del JSON cambia los genotipos e índices y hace incompatibles los checkpoints previos.
 
 ---
 
-## 6. Campo `pipeline`
+## 6. Campo `design_spaces.pipeline`
 
-Lista ordenada de slots.
+Lista ordenada de slots dentro de `design_spaces` (no es un campo de primer nivel). Se omite para problemas sin etapas; si contiene slots, `SearchSpace` necesita la ruta a las definiciones de stages para comprobar su existencia y filtrar alternativas por restricciones.
 
 ```json
-"pipeline": [
-  {
-    "slot": 0,
-    "candidates": []
-  },
-  {
-    "slot": 1,
-    "candidates": []
-  }
-]
+"design_spaces": {
+  "pipeline": [
+    {
+      "slot": 0,
+      "candidates": [{"stage": "bgr_to_hsv"}]
+    },
+    {
+      "slot": 1,
+      "candidates": [{"stage": "in_range"}]
+    }
+  ]
+}
 ```
 
 Cada slot representa una posición lógica en el pipeline. El buscador/orquestador selecciona un candidato de cada slot para construir una configuración concreta.
@@ -652,7 +652,45 @@ wrapper_inputs
 
 ---
 
-# 13. Ejemplo completo
+# 13. Ejemplos completos
+
+Un problema discreto sin pipeline, por ejemplo seleccionar una configuración de servicio:
+
+```json
+{
+  "id": "service_configuration",
+  "design_spaces": {
+    "deployment": {
+      "replicas": {"type": "choice", "values": [1, 2, 4]},
+      "region": {"type": "choice", "values": ["eu", "us"]}
+    },
+    "runtime": {
+      "cache": {"type": "choice", "values": [false, true]}
+    }
+  }
+}
+```
+
+```python
+space = SearchSpace("service_configuration.json")
+individual = space.from_index(0)
+assert "pipeline" not in individual.values
+assert individual.values == {"deployment": {"replicas": 1, "region": "eu"}, "runtime": {"cache": False}}
+assert space.search_space_size == 12
+```
+
+Para escenarios de pipeline se usa además la ruta de las definiciones de stages:
+
+```python
+from pathlib import Path
+
+# Ejecutar desde la raiz del checkout; en otro directorio, indicar su ruta absoluta.
+repo_root = Path.cwd().resolve()
+definitions = repo_root / "search_space/stages/definitions"
+space = SearchSpace(repo_root / "use_cases/insect_segmentation/scenarios/tfg_pipeline.json", definitions)
+```
+
+Ejemplo completo de pipeline:
 
 ```json
 {
@@ -668,7 +706,7 @@ wrapper_inputs
     "system": {
       "memory_total_kib": {
         "type": "choice",
-      "values": [128, 256, 512]
+        "values": [128, 256, 512]
       },
       "memory_bank_size_kib": {
         "type": "choice",
@@ -678,43 +716,39 @@ wrapper_inputs
         "type": "choice",
         "values": [0, 50]
       }
-    }
-  },
-  "pipeline": [
-    {
-      "slot": 0,
-      "candidates": [
-        {
-          "stage": "bgr_to_hsv"
-        },
-        {
-          "stage": "rgb_to_hsv"
-        }
-      ]
     },
-    {
-      "slot": 1,
-      "candidates": [
-        {
-          "stage": "in_range",
-          "parameters": {
-            "lower_0": {
-              "type": "integer_range",
-              "start": 0,
-              "stop": 60,
-              "step": 10
-            },
-            "upper_0": {
-              "type": "integer_range",
-              "start": 20,
-              "stop": 80,
-              "step": 10
+    "pipeline": [
+      {
+        "slot": 0,
+        "candidates": [
+          {"stage": "bgr_to_hsv"},
+          {"stage": "rgb_to_hsv"}
+        ]
+      },
+      {
+        "slot": 1,
+        "candidates": [
+          {
+            "stage": "in_range",
+            "parameters": {
+              "lower_0": {
+                "type": "integer_range",
+                "start": 0,
+                "stop": 60,
+                "step": 10
+              },
+              "upper_0": {
+                "type": "integer_range",
+                "start": 20,
+                "stop": 80,
+                "step": 10
+              }
             }
           }
-        }
-      ]
-    }
-  ]
+        ]
+      }
+    ]
+  }
 }
 ```
 
@@ -725,14 +759,14 @@ wrapper_inputs
 Para cada archivo de configuración:
 
 1. `id` debe existir y ser único.
-2. `pipeline` debe ser una lista.
+2. `design_spaces.pipeline`, si existe, debe ser una lista.
 3. Cada slot debe tener `slot` y `candidates`.
 4. Cada candidate debe tener `stage`.
 5. `stage` debe existir como `definition.id`.
 6. Cada clave de `candidate.parameters` debe existir como `definition.parameters[*].name`.
-7. `design_spaces`, si existe, debe ser un mapa de dominios a mapas de parámetros.
-8. Cada dominio de `design_spaces` debe tener un nombre estable, por ejemplo `hls` o `system`.
-9. Cada parámetro de `design_spaces` debe usar un tipo de configuración soportado para espacios finitos.
+7. `design_spaces` debe incluir al menos una dimensión: slots en `pipeline` o parámetros de otros dominios. Ninguna dimensión puede tener cero alternativas.
+8. Cada dominio de parámetros debe tener un nombre estable, por ejemplo `hls` o `system`.
+9. Cada parámetro de esos dominios debe usar un tipo de configuración soportado para espacios finitos.
 10. Los `file_ref` deben apuntar a claves existentes en `resources.files`.
 11. Los `object_ref` deben apuntar a claves existentes en `resources.objects`.
 12. `wrapper_inputs` no debe confundirse con `interface.inputs`.
@@ -745,10 +779,10 @@ Para cada archivo de configuración:
 Estos archivos responden a:
 
 ```text
-¿Qué pipeline o familia de pipelines se quiere explorar?
-¿Qué etapas puede ocupar cada slot?
+¿Qué decisiones discretas se quieren explorar?
+Si hay pipeline, ¿qué etapas puede ocupar cada slot?
 ¿Qué valores puede tomar cada parámetro?
-¿Qué decisiones globales de HLS o sistema forman parte del diseño?
+¿Qué otros dominios (HLS, sistema u otro problema) forman parte del diseño?
 ¿Qué recursos externos necesita el wrapper/composer?
 ```
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+import shutil
+from tempfile import mkdtemp
 import warnings
 from typing import Any
 from uuid import uuid4
 
 from genio.algorithm.base import SearchAlgorithm, SearchContext
-from genio.backend.base import Backend
-from genio.cache import ArtifactCache
 from genio.checkpoint import (
     CheckpointCompatibilityError,
     CheckpointNotSupportedError,
@@ -32,7 +32,8 @@ from genio.core.individual import Individual
 from genio.core.proposal import Proposal
 from genio.core.search_result import SearchResult
 from genio.evaluation.executor import EvaluationExecutor
-from genio.evaluation.step import EvaluationStep
+from genio.evaluation.cache import EvaluationCache
+from genio.evaluation.task import _workspace_segment
 from genio.evaluation.workflow import EvaluationWorkflow
 from genio.objective import ObjectiveSet
 from genio.objective.runtime import (
@@ -51,25 +52,26 @@ class OptimizationSession:
     and optionally persists completed-batch checkpoints. It is the integration
     point between the otherwise independent framework components.
 
-    The session owns run state, but it does not own the backend's lifecycle. Use
-    the backend as a context manager or call ``backend.shutdown()`` when its
-    resources are no longer needed.
+    The session owns run state, local task scheduling, and workspace cleanup.
+    Supervisor logs are retained separately from disposable task workspaces.
     """
 
     def __init__(
         self,
         search_space: SearchSpace,
         algorithm: SearchAlgorithm,
-        backend: Backend,
         evaluation_workflow: EvaluationWorkflow,
         statistics: StatisticsCollector | None = None,
         id: str | None = None,
         run_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-        artifact_cache: ArtifactCache | None = None,
         checkpoint_policy: CheckpointPolicy | None = None,
         objective_set: ObjectiveSet | None = None,
         keep_all_individuals: bool = False,
+        max_workers: int = 1,
+        work_dir: str | Path | None = None,
+        execution_metadata: Mapping[str, Any] | None = None,
+        cache_capacity: Mapping[str, int | None] | None = None,
     ) -> None:
         """Configure an optimization session without starting it.
 
@@ -77,7 +79,6 @@ class OptimizationSession:
             search_space: Factory and finite domain from which candidates come.
             algorithm: Stateful strategy implementing the ``ask``/``tell``
                 protocol.
-            backend: Execution mechanism used by the workflow executor.
             evaluation_workflow: Dependency-ordered steps run for every candidate.
             statistics: Hook receiver for session events. Defaults to an in-memory
                 counter and history collector.
@@ -85,50 +86,60 @@ class OptimizationSession:
             run_id: Identifier for this concrete execution lineage. A random UUID
                 is generated when omitted and restored from a checkpoint on resume.
             metadata: Application-defined values included in compatibility checks.
-            artifact_cache: Optional session-scoped cache shared by evaluation
-                steps.
             checkpoint_policy: Optional persistence and restoration policy.
             objective_set: Objective definitions and transformation strategies.
                 Algorithms that do not consume objectives may omit it.
             keep_all_individuals: Keep completed individual workspaces on disk.
                 Defaults to ``False`` and cleans them after each committed batch.
+            max_workers: Maximum simultaneous local task processes.
+            work_dir: Root for workspaces and retained supervisor logs.
+            execution_metadata: Local resource paths available to tasks.
+            cache_capacity: Maximum entries for each step. Omitted or zero
+                disables caching; ``None`` for a named step has no limit.
 
         Note:
-            Checkpoint compatibility is validated when :meth:`run` starts. Active
-            artifact caching and checkpointing cannot currently be combined.
+            Checkpoint compatibility is validated when :meth:`run` starts.
         """
         if not isinstance(keep_all_individuals, bool):
             raise TypeError("keep_all_individuals must be a boolean.")
-        if artifact_cache is not None:
-            cache_storage = getattr(artifact_cache, "storage_dir", None)
-            backend_storage = getattr(
-                backend,
-                "base_work_dir",
-                getattr(backend, "local_staging_dir", None),
-            )
-            if cache_storage is not None and backend_storage is not None:
-                try:
-                    Path(cache_storage).resolve().relative_to(
-                        Path(backend_storage).resolve()
-                    )
-                except ValueError:
-                    pass
-                else:
-                    raise ValueError(
-                        "artifact cache storage_dir must be outside the backend workspace."
-                    )
         self.id = id or search_space.scenario_id
         self.run_id = run_id or uuid4().hex
         self._configured_run_id = run_id
         self.search_space = search_space
         self.algorithm = algorithm
-        self.backend = backend
+        self.max_workers = max_workers
+        self.work_dir = Path(work_dir or mkdtemp(prefix="genio-")).resolve()
+        self.execution_metadata = dict(execution_metadata or {})
         self.evaluation_workflow = evaluation_workflow
-        self.artifact_cache = artifact_cache
+        if cache_capacity is not None and not isinstance(cache_capacity, Mapping):
+            raise TypeError("cache_capacity must map step IDs to entry limits.")
+        self.cache_capacity = dict(cache_capacity or {})
+        if any(not isinstance(step_id, str) for step_id in self.cache_capacity):
+            raise ValueError("Cache step IDs must be strings.")
+        unknown_steps = set(self.cache_capacity) - {
+            step.id for step in self.evaluation_workflow.steps
+        }
+        if unknown_steps:
+            raise ValueError(f"Unknown cache step IDs: {sorted(unknown_steps)!r}.")
+        self.evaluation_cache = (
+            EvaluationCache(
+                self.work_dir / "cache" / f"{self.run_id}-{uuid4().hex}",
+                self.cache_capacity,
+            )
+            if self.cache_capacity
+            else None
+        )
+        if self.evaluation_cache is not None:
+            # Cache files are performance-only state, never checkpoint state.
+            self.evaluation_cache.clear()
         self.evaluation_executor = EvaluationExecutor(
             self.evaluation_workflow,
-            backend,
-            artifact_cache=artifact_cache,
+            max_workers=max_workers,
+            work_dir=self.work_dir,
+            run_id=self.run_id,
+            execution_metadata=self.execution_metadata,
+            search_space=search_space,
+            cache=self.evaluation_cache,
         )
         self.statistics = statistics if statistics is not None else InMemoryStatistics()
         self.metadata = metadata or {}
@@ -197,7 +208,7 @@ class OptimizationSession:
 
         Note:
             Calling this method again after successful completion returns the
-            existing result. Backend resources are not shut down automatically.
+            existing result. Supervisor logs remain in ``work_dir/logs``.
         """
 
         try:
@@ -205,6 +216,11 @@ class OptimizationSession:
         finally:
             if self._checkpoint_store is not None:
                 self._checkpoint_store.release_session_lease()
+            if self.evaluation_cache is not None:
+                try:
+                    self.evaluation_cache.clear()
+                except OSError as exc:
+                    warnings.warn(f"Could not remove session cache: {exc}", RuntimeWarning)
 
     def _run(self) -> SearchResult:
         """Execute the loop while :meth:`run` owns lease cleanup."""
@@ -267,9 +283,20 @@ class OptimizationSession:
                         self._persist_checkpoint(status="running")
                     if not self.keep_all_individuals:
                         for individual in individuals:
-                            self.backend.cleanup_individual_workspace(individual.id)
-                    if self.artifact_cache is not None:
-                        self.artifact_cache.prune()
+                            workspace = (
+                                self.evaluation_executor.workspace_root
+                                / _workspace_segment(individual.id, "individual_id")
+                            )
+                            if workspace.exists():
+                                for step_workspace in workspace.iterdir():
+                                    source = step_workspace / "logs"
+                                    if source.is_dir():
+                                        retained = (
+                                            self.work_dir / "logs" / self.run_id
+                                            / individual.id / step_workspace.name / "task"
+                                        )
+                                        shutil.copytree(source, retained, dirs_exist_ok=True)
+                                shutil.rmtree(workspace)
                 finally:
                     self._batch_in_progress = False
 
@@ -400,8 +427,6 @@ class OptimizationSession:
                 self._checkpoint_store.acquire_session_lease()
             return
         if self._checkpoint_store is None or self.checkpoint_policy is None:
-            if self.artifact_cache is not None:
-                self.artifact_cache.clear()
             self.statistics.on_session_started(self)
             self._started = True
             return
@@ -418,8 +443,6 @@ class OptimizationSession:
                     f"Checkpoint directory already contains {self._checkpoint_store.latest_path}; "
                     "configure resume_from or use another directory."
                 )
-            if self.artifact_cache is not None:
-                self.artifact_cache.clear()
             self._checkpoint_compatibility = self._compatibility_signature()
             self.statistics.on_session_started(self)
         self._started = True
@@ -434,26 +457,6 @@ class OptimizationSession:
             raise CheckpointNotSupportedError(
                 f"Statistics collector {type(self.statistics).__name__} does not support "
                 "checkpointing."
-            )
-        if self.artifact_cache is not None:
-            raise CheckpointNotSupportedError(
-                "Checkpointing with an artifact cache is not supported until cache "
-                "entries and telemetry can be restored deterministically."
-            )
-        if type(self.backend).checkpoint_signature is Backend.checkpoint_signature:
-            raise CheckpointNotSupportedError(
-                f"Backend {type(self.backend).__name__} must override "
-                "checkpoint_signature() to support checkpointing."
-            )
-        unsupported_steps = [
-            step.id
-            for step in self.evaluation_workflow.steps
-            if type(step).checkpoint_signature is EvaluationStep.checkpoint_signature
-        ]
-        if unsupported_steps:
-            raise CheckpointNotSupportedError(
-                "Evaluation steps must override checkpoint_signature(): "
-                + ", ".join(unsupported_steps)
             )
 
     def _checkpoint_payload(self, *, status: str) -> dict[str, Any]:
@@ -472,7 +475,6 @@ class OptimizationSession:
                 "run_id": self.run_id,
                 "next_batch_index": self._next_batch_index,
                 "next_proposal_sequence": self._next_proposal_sequence,
-                "backend_run_id": getattr(self.backend, "run_id", None),
                 "metadata": self.metadata,
             },
             "search_space_state": self.search_space.checkpoint_state(),
@@ -620,17 +622,13 @@ class OptimizationSession:
         self.search_space.restore_checkpoint_state(checkpoint["search_space_state"])
         self._checkpoint_compatibility = expected_compatibility
         self.run_id = checkpoint_run_id
-        backend_run_id = session_state.get("backend_run_id")
-        if backend_run_id is not None and hasattr(self.backend, "run_id"):
-            self.backend.run_id = str(backend_run_id)
+        self.evaluation_executor.run_id = self.run_id
         self._evaluations = evaluations
         self._evaluated_batches = evaluated_batches
         self._next_batch_index = next_batch_index
         self._next_proposal_sequence = next_proposal_sequence
         self._finalized = status == "completed"
         self._completed = status == "completed"
-        if self.artifact_cache is not None:
-            self.artifact_cache.clear()
         self.statistics.restore_checkpoint_state(
             statistics_state,
             session=self,
@@ -643,10 +641,7 @@ class OptimizationSession:
         """Fingerprint configuration that must remain stable across a resume."""
         assert self._checkpoint_store is not None
         assert self.checkpoint_policy is not None
-        workflow = [
-            signature_value(step.checkpoint_signature())
-            for step in self.evaluation_workflow.execution_order()
-        ]
+        workflow = signature_value(self.evaluation_workflow.checkpoint_signature())
         return {
             "algorithm_type": qualified_name(self.algorithm),
             "algorithm_configuration": self._checkpoint_store.fingerprint(
@@ -663,8 +658,11 @@ class OptimizationSession:
                 signature_value(self.search_space.checkpoint_signature())
             ),
             "workflow": self._checkpoint_store.fingerprint(workflow),
-            "backend": self._checkpoint_store.fingerprint(
-                signature_value(self.backend.checkpoint_signature())
+            "execution": self._checkpoint_store.fingerprint(
+                signature_value({
+                    "type": "local-process",
+                    "resources": self.execution_metadata,
+                })
             ),
             "statistics_type": qualified_name(self.statistics),
             "statistics_configuration": self._checkpoint_store.fingerprint(

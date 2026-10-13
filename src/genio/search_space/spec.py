@@ -40,13 +40,16 @@ class SearchScenarioSpec:
 
     Attributes:
         id: Stable scenario identifier used in individuals and generated IDs.
-        slots: Ordered pipeline dimensions of the search space.
-        design_spaces: Additional ordered domains and their allowed values. Their
-            genes are appended after all slot genes.
+        slots: Optional ordered pipeline dimensions of the search space.
+        design_spaces: Discrete parameter domains and their allowed values.
+        domain_order: Order of domains as declared in the scenario JSON, including
+            ``pipeline`` when present. Determines genotype gene positions. When
+            constructing a spec directly, the default uses pipeline first.
         metadata: Scenario fields not interpreted by the search-space loader.
     """
 
     id: str
-    slots: tuple[SlotSpec, ...]
+    slots: tuple[SlotSpec, ...] = ()
     design_spaces: dict[str, dict[str, tuple[Any, ...]]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    domain_order: tuple[str, ...] = ()

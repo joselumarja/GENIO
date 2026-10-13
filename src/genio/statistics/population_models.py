@@ -131,6 +131,12 @@ class PopulationRecord:
         algorithm_metadata = proposal.individual.metadata.get("algorithm", {})
         if not isinstance(algorithm_metadata, Mapping):
             raise TypeError("individual metadata 'algorithm' must be a mapping.")
+        slots = proposal.individual.values.get("pipeline", ())
+        design = {
+            domain: values
+            for domain, values in proposal.individual.values.items()
+            if domain != "pipeline"
+        }
         return cls(
             proposal_id=proposal.proposal_id,
             individual_id=proposal.individual.id,
@@ -138,11 +144,11 @@ class PopulationRecord:
             batch_position=proposal.batch_position,
             genotype=proposal.individual.genotype,
             search_index=proposal.individual.search_index,
-            stages=tuple(choice.stage for choice in proposal.individual.slots),
+            stages=tuple(choice.stage for choice in slots),
             stage_parameters=tuple(
-                choice.parameters for choice in proposal.individual.slots
+                choice.parameters for choice in slots
             ),
-            design=proposal.individual.design,
+            design=design,
             algorithm_metadata=algorithm_metadata,
         )
 

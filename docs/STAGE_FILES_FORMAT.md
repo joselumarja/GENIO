@@ -7,7 +7,7 @@ Hay dos familias de archivos:
 1. `definitions`: contrato conceptual de una etapa.
 2. `implementations`: llamada concreta en un backend funcional o HLS.
 
-Los tests en `search_space/tests/*.json` configuran escenarios concretos de búsqueda/evaluación y se mencionan solo para explicar cómo se consumen los campos.
+Los escenarios en `use_cases/insect_segmentation/scenarios/*.json` configuran búsquedas/evaluaciones concretas y se mencionan solo para explicar cómo se consumen los campos. Estos escenarios y el catálogo de stages pertenecen al checkout; el paquete instalable `genio_use_cases.image_pipeline` solo contiene código y necesita las rutas de recursos proporcionadas por el llamador.
 
 ---
 
@@ -277,7 +277,7 @@ Reglas actuales:
 
 ### 2.7.1 Cuándo se aplican
 
-`SearchSpace` aplica estas constraints al generar las alternativas concretas de cada slot. Para cada candidate del archivo de test, se expanden las combinaciones de parámetros y solo se añaden a la lista de alternativas aquellas que cumplen todas las constraints declaradas en la definition de la stage.
+`SearchSpace` aplica estas constraints al generar las alternativas concretas de cada slot del pipeline. Para cada candidate del archivo de test, se expanden las combinaciones de parámetros y solo se añaden a la lista de alternativas aquellas que cumplen todas las constraints declaradas en la definition de la stage. Los escenarios sin pipeline no consultan definiciones de stages.
 
 Por ejemplo, si un test define:
 
@@ -955,7 +955,7 @@ No es una ruta absoluta ni relativa al JSON. El compilador lo resuelve utilizand
 en este orden:
 
 ```text
-1. Directorios include contenidos en el package.
+1. Directorios include proporcionados desde `hls_implementations/include`.
 2. <vitis_libraries_path>/vision/L1/include.
 3. Rutas adicionales declaradas en metadata["hls_include_paths"].
 ```
@@ -973,17 +973,28 @@ hls_implementations/include/
 Y se exponen en una sesión local mediante:
 
 ```python
-metadata={
+from pathlib import Path
+
+# Ejecutar desde la raiz del checkout; en otro directorio, indicar su ruta absoluta.
+repo_root = Path.cwd().resolve()
+
+execution_metadata={
     "vitis_libraries_path": str(VITIS_LIBRARIES_PATH),
     "hls_include_paths": [
-        str(ROOT / "hls_implementations/include"),
+        str(repo_root / "hls_implementations/include"),
     ],
 }
 ```
 
-En `SSHBackend` esas rutas pertenecen al host remoto y deben ser absolutas. Los
-headers no se copian al package: todos los workers deben disponer de las mismas
-rutas y revisiones.
+Las rutas se interpretan en el host local donde corren los procesos supervisados.
+El soporte SSH se ha eliminado. Los headers propios están en el checkout;
+sus rutas y el checkout de Vitis Libraries deben ser
+accesibles a todos los workers locales.
+
+Las plantillas HLS están en
+`hls_templates/vitis_vision_image_pipeline` en la raíz del checkout;
+proporcionar esta ruta a `HLSImagePipelineComposer` mediante `templates_path`.
+Para las dependencias Python de este dominio usar `pip install -e '.[image_pipeline]'`.
 
 El ejecutable `v++` se resuelve desde `PATH`, configurado por el `source` de Vitis
 realizado antes de iniciar GENIO. La versión detectada se pasa al composer para

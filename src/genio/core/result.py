@@ -22,7 +22,7 @@ class Result:
         status: Whether the workflow completed successfully.
         metrics: Numeric measurements keyed as ``step_id.metric_name``.
         error: Human-readable failure description, or ``None`` on success.
-        metadata: Executor metadata such as per-step cache information.
+        metadata: Additional evaluation information.
     """
 
     individual_id: str
@@ -42,7 +42,7 @@ class Result:
 
         Args:
             individual_id: Identifier of the evaluated candidate.
-            metrics: Numeric measurements produced by metric artifacts.
+            metrics: Numeric measurements produced by evaluation steps.
             metadata: Additional executor information to attach to the result.
 
         Returns:

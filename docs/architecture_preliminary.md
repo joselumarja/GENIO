@@ -2,7 +2,26 @@
 
 ## Objetivo Del Framework
 
-GENIO es un framework de optimizacion extensible. Su nucleo define contratos y estructura basica; las evaluaciones concretas, algoritmos concretos, compositores concretos y artefactos concretos se implementan como extensiones.
+GENIO es un framework de optimizacion extensible. Su nucleo `src/genio` contiene algoritmos de busqueda, `SearchSpace`, las bases `Composer`/`ExecutionPackage` y `Artifact`, `EvaluationStep`/`EvaluationTask`/`EvaluationWorkflow`/`EvaluationExecutor`, objetivos, estadisticas y sesiones. Las implementaciones de dominio se distribuyen en el paquete instalable `src/genio_use_cases`; los escenarios JSON y runners bajo `use_cases/` son experimentos del repositorio, no modulos de la distribucion instalada.
+
+```text
+src/
+├── genio/                         # contratos, busqueda, evaluacion, objetivos y sesion
+└── genio_use_cases/               # extensiones instalables, solo codigo
+    ├── image_pipeline/            # composers Python/HLS, tasks, RTL, informes HLS
+    └── xheep/                     # composer GR-HEEP y simulacion Verilator
+search_space/stages/                # definitions e implementations del checkout
+hls_templates/vitis_vision_image_pipeline/  # plantillas HLS del checkout
+hls_implementations/include/        # headers propios del checkout
+gr_heep_templates/                 # plantillas GR-HEEP del checkout
+use_cases/                          # escenarios y runners del checkout, no instalados
+├── insect_segmentation/
+└── date_experiments/
+```
+
+`genio_use_cases.image_pipeline.python` contiene `PythonImagePipelineComposer` y `PythonExecutionPackage`; `.hls` contiene `HLSImagePipelineComposer` y `HLSExecutionPackage`; `.image_functional` y `.hls_image_pipeline_synthesis` contienen las tasks respectivas, `.hls_synthesis` contiene `HLSRTLArtifact` y `.hls_reports` los parsers de informes. `genio_use_cases.xheep.gr_heep` contiene `GRHeepConfigurationComposer`/`GRHeepConfigurationPackage` y `.xheep_verilator_simulation` la task de simulacion. Las clases de dominio tambien se exportan desde `genio_use_cases.image_pipeline` y `genio_use_cases.xheep`, no desde `genio`.
+
+Para dependencias de dominio, instalar `pip install -e '.[image_pipeline]'` o `pip install -e '.[image_pipeline,xheep]'`; Vitis, GR-HEEP y Conda siguen siendo requisitos externos. El paquete instalado solo contiene codigo: el llamador debe proporcionar las rutas de `search_space/stages`, `hls_templates`, `hls_implementations` y `gr_heep_templates` desde un checkout. Los ejemplos de `use_cases/` se ejecutan desde la raiz del repositorio con `python -m use_cases.insect_segmentation.run_random_search`, `python -m use_cases.insect_segmentation.run_population_search`, `python -m use_cases.insect_segmentation.run_genetic_search` o `python -m use_cases.date_experiments.run`.
 
 El framework separa estas responsabilidades:
 
@@ -12,7 +31,7 @@ El framework separa estas responsabilidades:
 - Interpretar metricas mediante objetivos reutilizables.
 - Declarar workflows de evaluacion con pasos dependientes.
 - Convertir cada paso en una tarea ejecutable.
-- Ejecutar tareas mediante backends.
+- Ejecutar tareas en procesos locales supervisados.
 - Registrar estadisticas de la sesion.
 
 La clase que conecta estas piezas es `OptimizationSession`.
@@ -26,7 +45,7 @@ OptimizationSession
 │   └── EvaluationStep[]
 │       └── EvaluationTask
 ├── EvaluationExecutor
-├── Backend
+├── Supervisor de procesos locales
 └── StatisticsCollector
 ```
 
@@ -59,27 +78,23 @@ EvaluationWorkflow.execution_order()
         ↓
 Para cada EvaluationStep:
         ↓
-EvaluationStep.create_task(individual, accumulated_artifacts)
+EvaluationStep.create_task(individual, required_artifacts)
         ↓
 EvaluationTask concreta
         ↓
-EvaluationExecutor valida isinstance(task, step.task_type)
+EvaluationExecutor valida isinstance(task, EvaluationTask)
         ↓
-Backend.submit(task)
-        ↓
-Backend crea ExecutionContext(base_work_dir, run_id, backend_id, metadata)
+Supervisor prepara workspace por individuo/step e inicia proceso local con TaskContext(workspace, resources)
         ↓
 EvaluationTask.run(context)
         ↓
-Artifact[]
+EvaluationOutput(metrics, artifacts)
         ↓
-Backend devuelve EvaluationHandle
-        ↓
-Backend.collect(handle)
+Supervisor recoge EvaluationOutput y el estado del proceso
         ↓
 EvaluationExecutor acumula artifacts internamente como step_id.artifact_name
         ↓
-EvaluationExecutor extrae metricas desde MetricArtifact como step_id.metric_name
+EvaluationExecutor agrega las metricas locales como step_id.metric_name
         ↓
 Result.success(individual.id, metrics=accumulated_metrics)
         ↓
@@ -108,18 +123,18 @@ StatisticsCollector.on_session_completed(result)
 
 ## Reglas Arquitectonicas
 
-- `EvaluationStep` define un paso logico, sus dependencias y el tipo de task que produce.
+- `EvaluationStep` configura una clase de task; la task declara sus entradas y salidas de artefactos.
 - `EvaluationStep.create_task(...)` no ejecuta herramientas externas ni toca infraestructura.
 - `EvaluationTask` contiene la receta concreta de ejecucion de una unidad de trabajo.
-- `EvaluationTask.run(context)` puede crear carpetas, invocar composers, usar plantillas, ejecutar comandos y devolver artefactos.
-- Solo los artefactos que heredan de `MetricArtifact` se transforman en `Result.metrics`.
+- `EvaluationTask.run(context)` puede crear carpetas, invocar composers, usar plantillas y ejecutar comandos; devuelve `EvaluationOutput` con metricas y artefactos separados.
+- Las metricas de `EvaluationOutput.metrics` se agregan en `Result.metrics`; los artefactos solo alimentan steps posteriores.
 - `Result.metrics` contiene datos numericos sin semantica de optimizacion.
 - `Objective` selecciona metricas concretas y declara si se maximizan o minimizan.
 - `ObjectiveSet` pertenece a la sesion y configura extraccion, normalizacion y scalarizacion.
 - Cada algoritmo valida el `ObjectiveSchema` y consume el `EvaluatedBatch` que necesita.
-- `Backend` proporciona infraestructura comun: workspace base, contexto, handles, estados, errores y recogida de artefactos.
-- `Backend` no conoce logica especifica de dominio como Vitis, OpenCV, Git, plantillas o datasets.
-- `ExecutionContext` contiene informacion de runtime/backend, no configuracion especifica del dominio.
+- `OptimizationSession` supervisa procesos locales y recoge `EvaluationOutput` de cada task.
+- `OptimizationSession` posee la `EvaluationCache` de su ejecucion; `EvaluationTask` declara dependencias de dominios y `EvaluationExecutor` calcula las claves y restaura las salidas.
+- `TaskContext` expone el workspace preparado y los recursos de ejecucion, sin helpers ni logica de dominio.
 - Configuraciones especificas como plantillas Vitis, rutas de dataset o comandos de toolchain deben vivir en la `EvaluationTask`, en artefactos de entrada o en objetos de configuracion propios. Los pesos de scoring pertenecen al `Scalarizer` de `ObjectiveSet`.
 - `evaluation_workflow` es obligatorio en `OptimizationSession`; no existe evaluacion por defecto independiente del dominio.
 
@@ -139,13 +154,14 @@ Constructor:
 OptimizationSession(
     search_space: SearchSpace,
     algorithm: SearchAlgorithm,
-    backend: Backend,
     evaluation_workflow: EvaluationWorkflow,
+    max_workers: int = 1,
+    work_dir: Path | None = None,
+    execution_metadata: Mapping[str, Any] | None = None,
     statistics: StatisticsCollector | None = None,
     id: str | None = None,
     run_id: str | None = None,
     metadata: dict[str, Any] | None = None,
-    artifact_cache: ArtifactCache | None = None,
     checkpoint_policy: CheckpointPolicy | None = None,
     objective_set: ObjectiveSet | None = None,
     keep_all_individuals: bool = False,
@@ -162,15 +178,19 @@ save_checkpoint() -> Path | None
 
 Responsabilidades:
 
-- Mantener referencias a `SearchSpace`, `SearchAlgorithm`, `Backend`, `EvaluationWorkflow`, `EvaluationExecutor` y `StatisticsCollector`.
+- Mantener referencias a `SearchSpace`, `SearchAlgorithm`, `EvaluationWorkflow`, `EvaluationExecutor` y `StatisticsCollector`.
 - Ejecutar el ciclo `ask/evaluate/tell`.
 - Delegar evaluaciones en `EvaluationExecutor`.
 - Asignar identidad unica y orden global a cada propuesta generada.
 - Convertir `Result` en `Evaluation` y anotar metadata de propuesta durante `run()`.
 - Notificar eventos a `StatisticsCollector`.
-- Crear el scope de una caché de artifacts por ejecución cuando se configura.
 - Guardar y restaurar checkpoints consistentes entre batches cuando existe una policy.
 - Construir y devolver `SearchResult`.
+
+Por defecto `OptimizationSession(keep_all_individuals=False)` elimina workspaces de
+`work_dir/workspaces` al cerrar cada batch, despues de statistics/checkpoint y de
+todos los steps downstream. `keep_all_individuals=True` los conserva para depuracion;
+los logs se retienen independientemente bajo `work_dir/logs`.
 
 ### Checkpoints De Sesion
 
@@ -224,21 +244,24 @@ Antes de restaurar se validan fingerprints de:
 - Configuracion y tipo del algoritmo.
 - Estructura ordenada completa del search space.
 - Workflow, steps, composers, definiciones y templates.
-- Backend y metadata de contexto.
+- Configuracion y metadata de ejecucion.
 - Collector de estadisticas y metadata de sesion.
 - `compatibility_tag` opcional proporcionado por el experimento.
 
-`SearchAlgorithm`, `StatisticsCollector`, `EvaluationStep`, `Composer` y `Backend`
-exponen metodos `checkpoint_signature()` para declarar configuracion relevante. Los
+`SearchAlgorithm`, `StatisticsCollector`, `EvaluationStep` y `Composer`
+exponen metodos `checkpoint_signature()`. La firma del step incluye id, clase de
+task, config, timeout y contratos de artefactos; el workflow firma la lista reordenada
+de steps. Los
 algoritmos implementados exponen ademas `checkpoint_state()` y
 `restore_checkpoint_state(...)`.
 
 El formato es unico y responsabilidad de `OptimizationSession`; no existen versiones
 ni formatos por algoritmo. No se persisten batches en curso, handles, procesos ni conexiones.
 Una interrupcion durante un batch restaura el ultimo batch completo y repite el
-siguiente con los mismos IDs y estado RNG. Tampoco se permite todavia combinar
-checkpoints con `ArtifactCache`, porque restaurar sin sus entries cambiaria la
-trayectoria observable de ejecucion.
+siguiente con los mismos IDs y estado RNG.
+La `EvaluationCache` tampoco se guarda en checkpoints: se limpia tanto al iniciar una
+sesion nueva como al reanudarla, por lo que la reanudacion vuelve a ejecutar los
+steps hasta poblarla de nuevo.
 
 ## 2. Dominio De Busqueda
 
@@ -251,11 +274,11 @@ Define el dominio finito de busqueda y construye individuos validos.
 Interfaz principal:
 
 ```python
-SearchSpace(test_file, stages_definitions_path)
+SearchSpace(test_file, stages_definitions_path=None)
 SearchSpace.from_scenario(scenario) -> SearchSpace
 from_genotype(genotype, *, id=None, metadata=None) -> Individual
 from_index(search_index, *, id=None, metadata=None) -> Individual
-from_slots(slots, *, id=None, metadata=None) -> Individual
+slot_gene_positions -> tuple[int, ...]
 sample(...) -> Individual
 sample_population(size, unique=True, ...) -> list[Individual]
 genotype_to_index(genotype) -> int
@@ -267,14 +290,14 @@ to_index(individual) -> int
 Responsabilidades:
 
 - Cargar escenarios desde JSON.
-- Cargar definiciones de etapas.
+- Cargar definiciones de etapas cuando el escenario contiene un pipeline.
 - Construir `SearchScenarioSpec` y `SlotSpec`.
 - Expandir alternativas de parametros.
 - Crear individuos desde genotipos, indices o slots.
 - Convertir entre genotipo, indice e individuo.
 - Muestrear individuos y poblaciones.
 - Validar estructura basica del espacio.
-- Evaluar restricciones declaradas en definiciones de stages.
+- Evaluar restricciones declaradas en definiciones de stages para los escenarios con pipeline.
 
 ### `SearchScenarioSpec`
 
@@ -289,9 +312,10 @@ id: str
 slots: tuple[SlotSpec, ...]
 design_spaces: dict[str, dict[str, tuple[Any, ...]]]
 metadata: dict[str, Any]
+domain_order: tuple[str, ...]
 ```
 
-`design_spaces` agrupa decisiones globales por dominio. Estos dominios forman parte del mismo espacio de búsqueda que el pipeline, pero tienen consumidores distintos. El dominio `hls` es consumido por `HLSImagePipelineSynthesisEvaluationStep`; el dominio `system`, por `GRHeepConfigurationComposer` y `XHeepVerilatorSimulationEvaluationStep`.
+En el JSON de entrada, `design_spaces.pipeline` puede contener slots ordenados; al cargarlo se almacena en `slots`. Para problemas sin pipeline, se omite esta clave y `slots` queda vacío. `SearchScenarioSpec.design_spaces` contiene los dominios de parámetros discretos, independientemente del problema; al menos una dimensión debe estar presente. `domain_order` conserva el orden de aparición de los dominios, incluido `pipeline`, para ubicar sus genes. En los escenarios HLS, `hls` es consumido por `HLSImagePipelineSynthesisTask` y `system` por `GRHeepConfigurationComposer` y `XHeepVerilatorSimulationTask`.
 
 ### `SlotSpec`
 
@@ -334,17 +358,17 @@ Campos:
 ```python
 id: str
 scenario: str
-slots: tuple[StageChoice, ...]
+values: dict[str, Any]
 genotype: tuple[int, ...] | None
 search_index: int | None
-design: dict[str, Any]
 metadata: dict[str, Any]
 ```
 
-`design` mantiene separadas las decisiones globales por dominio:
+`values` reúne las elecciones materializadas por dominio; `pipeline` contiene una tupla de `StageChoice` cuando existe:
 
 ```python
 {
+    "pipeline": (StageChoice(slot=0, stage="resize"),),
     "hls": {
         "pipeline_ii": 1,
     },
@@ -356,14 +380,12 @@ metadata: dict[str, Any]
 }
 ```
 
-El genotype representa la combinación completa de genes de pipeline y genes de diseño. Los steps deben consumir solo el dominio que les corresponde.
+El genotype representa la combinación completa de genes de pipeline y genes de diseño en el orden declarado en `design_spaces`. Los steps deben consumir solo el dominio que les corresponde.
 
-Interfaz:
+Creación e interfaz:
 
 ```python
-Individual.from_slots(...)
-stage_sequence() -> tuple[str, ...]
-parameters_by_slot() -> dict[int, dict[str, Any]]
+SearchSpace.from_genotype(...) -> Individual
 ```
 
 ### `Proposal`
@@ -384,55 +406,39 @@ individual: Individual
 
 La identidad de propuesta pertenece a la ejecucion de busqueda y no modifica el diseño contenido en `Individual`.
 
-### `Artifact`, `MetricArtifact` y `ArtifactError`
+### `Artifact`
 
-Ubicacion: `src/genio/core/artifact.py`
+Ubicacion: `src/genio/evaluation/artifact.py`
 
-`Artifact` es una dataclass abstracta para salidas producidas por evaluaciones y consumidas por pasos posteriores.
+`Artifact[T]` es una dataclass concreta, generica, frozen y slotted para salidas
+producidas por evaluaciones y consumidas por pasos posteriores.
 
 Campos:
 
 ```python
-name: str
-producer: str
-individual_id: str
-objective: str | None
-metadata: dict[str, Any]
-```
-
-Metodo abstracto:
-
-```python
-load() -> Sequence[Any]
+data: T | None = None
+files: Mapping[str, Path] = field(default_factory=dict)
 ```
 
 Responsabilidades:
 
-- Representar una salida material o logica.
-- Proporcionar un nombre estable para acumulacion de artefactos.
+- Transportar datos estructurados pequenos y serializables con `pickle` en `data`.
+- Asociar nombres logicos en `files` a rutas de archivos existentes dentro del
+  workspace de la task productora.
 - Servir como frontera entre steps.
 
-`MetricArtifact` hereda de `Artifact` y marca artefactos que exponen metricas numericas normalizadas.
+Las metricas numericas no requieren una subclase de `Artifact`: la task las devuelve en
+`EvaluationOutput.metrics`. No hay metodo `load()` ni campos de identidad `name`,
+`producer`, `individual_id`, `objective` o `metadata`: el nombre local lo asigna
+`EvaluationOutput.artifacts` y el executor lo cualifica con `step_id.` dentro
+de la acumulacion independiente de cada individuo.
+La interpretacion de objetivos pertenece a `ObjectiveSet`.
 
-Interfaz adicional:
-
-```python
-metrics() -> Mapping[str, float]
-```
-
-Responsabilidades:
-
-- Identificar artefactos que contienen metricas numericas.
-- Permitir la composicion automatica de `Result.metrics`.
-- Mantener separada la carga general del artefacto (`load`) de la extraccion semantica de metricas (`metrics`).
-
-No debe:
-
-- Decidir si una metrica se maximiza o minimiza.
-- Comparar individuos.
-- Calcular fitness global.
-
-`ArtifactError` es la excepcion base para errores de artefactos.
+`HLSRTLArtifact` es una subclase marcador de `Artifact[Mapping[str, Any]]`:
+se define en `genio_use_cases.image_pipeline.hls_synthesis` (no en el nucleo);
+`data` incluye `origin`, `top_function`, `interface` y metadatos de imagen;
+`files` referencia el RTL mediante claves `verilog/<path>` o `vhdl/<path>`.
+El step X-HEEP consume ambas partes para integrar el acelerador.
 
 ### `Result` y `ResultStatus`
 
@@ -733,7 +739,7 @@ Separacion de responsabilidades:
 
 Ubicacion: `src/genio/evaluation/workflow.py`
 
-Dataclass inmutable que representa el grafo declarativo de pasos de evaluacion.
+Dataclass inmutable que representa pasos de evaluacion con dependencias inferidas de sus artefactos requeridos.
 
 Campos:
 
@@ -745,18 +751,17 @@ Interfaz:
 
 ```python
 execution_order() -> tuple[EvaluationStep, ...]
-ready_steps(completed: set[str]) -> tuple[EvaluationStep, ...]
+checkpoint_signature() -> list[Mapping[str, object]]
 ```
 
 Responsabilidades:
 
 - Guardar pasos de evaluacion.
 - Validar ids duplicados.
-- Validar dependencias inexistentes.
-- Detectar ciclos.
-- Construir el catalogo cualificado de artefactos producidos.
-- Validar estaticamente que cada requisito exista y tenga un tipo compatible.
-- Calcular orden de ejecucion compatible con dependencias.
+- Priorizar el orden declarado entre steps listos y adelantar productores requeridos.
+- Inferir cada productor solo por el id de step en `step_id.artifact_name` y comprobar que existe ese step.
+- Validar la forma y el tipo declarado de cada requisito, no las salidas dinamicas del productor.
+- Rechazar dependencias circulares entre artefactos.
 
 ### `EvaluationWorkflowError`
 
@@ -767,60 +772,49 @@ Excepcion base para workflows invalidos.
 Casos:
 
 - ids duplicados;
-- dependencias desconocidas;
-- ciclos en el workflow.
+- artefactos requeridos cuyo id de step productor no existe;
+- dependencias circulares;
+- requisitos y tipos de artefactos invalidos.
 
 ### `EvaluationStep`
 
 Ubicacion: `src/genio/evaluation/step.py`
 
-Clase abstracta que representa un paso logico del workflow.
+Dataclass generica que configura un paso logico del workflow.
 
 Interfaz:
 
 ```python
-class EvaluationStep(ABC):
+@dataclass(frozen=True, slots=True)
+class EvaluationStep:
     id: str
-    depends_on: tuple[str, ...] = ()
-    required_artifacts: Mapping[str, type[Artifact]] = {}
-    produced_artifacts: Mapping[str, type[Artifact]] = {}
-    task_type: type[EvaluationTask] = EvaluationTask
-
-    @abstractmethod
-    def create_task(
-        self,
-        individual: Individual,
-        artifacts: Mapping[str, Artifact],
-    ) -> EvaluationTask:
-        ...
+    task_class: type[EvaluationTask]
+    config: Mapping[str, Any] = field(default_factory=dict)
+    timeout_seconds: float | None = None
 ```
 
 Responsabilidades:
 
 - Declarar un identificador de paso.
-- Declarar dependencias mediante `depends_on`.
-- Declarar entradas cualificadas mediante `required_artifacts`.
-- Declarar salidas locales mediante `produced_artifacts`.
-- Declarar el tipo concreto de task que produce mediante `task_type`.
-- Crear una `EvaluationTask` concreta para un individuo.
-- Usar artefactos acumulados de pasos previos para construir tareas dependientes.
+- Derivar entradas de `task_class.requires`; las salidas se nombran al devolver `EvaluationOutput.artifacts`.
+- Pasar `config` al constructor tipado de la task junto con `individual`, `step_id`
+  y el mapa de artefactos requeridos, inyectados por el framework.
 
 Restriccion:
 
-- `create_task(...)` debe devolver una instancia de `step.task_type`.
-- El workflow comprueba antes de ejecutar que cada artifact requerido esta declarado
-  por una dependencia directa con un tipo compatible.
+- `config` no puede sobrescribir `individual`, `step_id` ni `artifacts`.
+- El workflow comprueba antes de ejecutar que existe otro step con el id productor
+  y lo ordena antes del consumidor; la presencia y el tipo del artefacto se comprueban en ejecucion.
 
 ### `EvaluationExecutor` y `EvaluationExecutionError`
 
 Ubicacion: `src/genio/evaluation/executor.py`
 
-Ejecuta un `EvaluationWorkflow` para uno o varios individuos usando un `Backend`.
+Ejecuta un `EvaluationWorkflow` para uno o varios individuos en procesos locales supervisados.
 
 Interfaz:
 
 ```python
-EvaluationExecutor(workflow: EvaluationWorkflow, backend: Backend)
 evaluate(individual: Individual) -> Result
 evaluate_many(individuals: Sequence[Individual]) -> list[Result]
 ```
@@ -828,79 +822,108 @@ evaluate_many(individuals: Sequence[Individual]) -> list[Result]
 Responsabilidades:
 
 - Recorrer `EvaluationWorkflow.execution_order()`.
-- Crear tasks mediante `EvaluationStep.create_task(...)`.
-- Validar coherencia `step.task_type` vs instancia creada.
+- Crear tasks mediante `EvaluationStep.create_task(...)` con solo los artefactos requeridos.
+- Validar que la instancia creada es una `EvaluationTask`.
 - Validar que la task pertenece al individuo y step solicitados.
-- Enviar tasks al backend.
-- Recoger artefactos desde el backend.
+- Ejecutar tasks en procesos locales supervisados.
+- Recoger `EvaluationOutput` de los procesos.
 - Acumular artefactos internamente con claves `step_id.artifact_name` para alimentar steps dependientes.
-- Extraer metricas desde `MetricArtifact` con claves `step_id.metric_name`.
-- Componer un `Result.success(...)` por individuo con `metrics`, sin incluir artefactos no metricos en el `Result`.
+- Agregar las metricas locales de `EvaluationOutput.metrics` con claves `step_id.metric_name`.
+- Componer un `Result.success(...)` por individuo con `metrics`, sin incluir artefactos en el `Result`.
 - Rechazar claves duplicadas de artefactos o metricas.
-- Rechazar artifacts no declarados, de tipo incorrecto o asociados a otro individuo.
+- Rechazar nombres de artifacts invalidos, tipos incorrectos y referencias a
+  archivos inexistentes o fuera del workspace de la task productora.
 - Rechazar metricas no numericas.
 
-`EvaluationExecutionError` se lanza cuando un step declara un `task_type` pero crea una task incompatible, cuando se detectan claves duplicadas de artefactos o metricas, o cuando un `MetricArtifact` expone valores no numericos.
+`EvaluationExecutionError` se lanza cuando una task devuelve una salida que no es `EvaluationOutput`, produce artefactos invalidos, duplica claves de artefactos o metricas, devuelve metricas no numericas, o cuando un productor exitoso omite un artefacto requerido o devuelve uno de tipo incorrecto. Estos errores de contrato abortan toda la sesion de optimizacion; los fallos de ejecucion de una task productora siguen siendo individuales y no detienen el resto del batch.
+
+### Cache De Evaluaciones Por Step
+
+`EvaluationCache` es local a una `OptimizationSession` y separa las entradas por
+step. `cache_capacity` asigna a cada ID un maximo de entradas: un step omitido o
+con `0` no usa cache, un entero positivo aplica LRU y `None` no limita su numero.
+Se elimina al terminar `run()` y no forma parte de checkpoints. Solo se reutilizan
+salidas exitosas; en una misma ola del step,
+evaluaciones equivalentes se coalescen para ejecutar una task representante y
+repartir su salida a los individuos correspondientes.
+
+Una clase `EvaluationTask` puede declarar `uses_domains` como tupla de nombres de
+dominios de `Individual.values`. Si no lo declara, se consideran todos los
+dominios. Las tasks integradas declaran `PythonImageFunctionalTask`:
+`("pipeline",)`, `HLSImagePipelineSynthesisTask`: `("pipeline", "hls")` y
+`XHeepVerilatorSimulationTask`: `("system",)`. El executor agrega de manera
+transitiva los dominios de los steps productores de cada artefacto requerido: la
+simulacion X-HEEP tambien depende del pipeline y de HLS por su RTL de entrada.
+
+La reutilizacion presupone que la task es determinista para sus dominios declarados
+y que datasets, toolchains, plantillas y otros recursos externos permanecen
+inmutables durante la sesion. La cache copia los archivos de `Artifact.files` fuera
+del workspace productor y, en cada hit o resultado coalescido, restaura copias en
+el workspace propio de cada individuo; nunca comparte rutas del productor. No es
+un almacen persistente de artefactos ni sustituye `keep_all_individuals`.
 
 ## 7. Tareas Ejecutables
 
-### `ExecutionContext`
+### `TaskContext`
 
 Ubicacion: `src/genio/evaluation/task.py`
 
-Contexto de runtime creado por el backend y entregado a cada task.
+Contexto de runtime local creado por el supervisor y entregado a cada task.
 
-Campos:
-
-```python
-base_work_dir: Path
-run_id: str | None
-backend_id: str | None
-metadata: Mapping[str, Any]
-```
-
-Helpers implementados:
+Campos (dataclass inmutable):
 
 ```python
-resolve_path(path: str | Path) -> Path
-resolve_resource_path(path: str | Path, *parts: str) -> Path
-resource_exists(path: str | Path) -> bool
-task_dir(task: EvaluationTask, *parts: str | Path) -> Path
-artifact_path(task: EvaluationTask, *parts: str | Path) -> Path
-log_path(task: EvaluationTask, *parts: str | Path) -> Path
-ensure_dir(path: str | Path) -> Path
-ensure_parent(path: str | Path) -> Path
-write_text(path: str | Path, content: str, *, encoding="utf-8") -> Path
-read_text(path: str | Path, *, encoding="utf-8") -> str
-write_bytes(path: str | Path, content: bytes) -> Path
-read_bytes(path: str | Path) -> bytes
-write_json(path: str | Path, data: Any, *, encoding="utf-8", indent=2) -> Path
-read_json(path: str | Path, *, encoding="utf-8") -> Any
-copy_file(source: str | Path, target: str | Path) -> Path
-copy_tree(source: str | Path, target: str | Path, *, dirs_exist_ok=True, symlinks=False) -> Path
-write_log(task: EvaluationTask, name: str, content: str) -> Path
-merged_env(env: Mapping[str, str] | None = None) -> dict[str, str]
-run_command(command: Sequence[str], *, cwd=None, env=None, timeout=None, check=True) -> CommandResult
+workspace: Path
+resources: Mapping[str, Any] = field(default_factory=dict)
 ```
 
 Responsabilidades:
 
-- Exponer el directorio base de trabajo controlado por el backend.
-- Exponer identificadores de runtime como `run_id` y `backend_id`.
-- Transportar metadata de runtime por task.
-- Mantener las tasks desacopladas del backend concreto.
-- Proporcionar helpers genericos de filesystem, logs, entorno y ejecucion de comandos.
-- Preservar opcionalmente enlaces simbolicos al copiar checkouts externos. La
-  integración GR-HEEP lo necesita para mantener `sw/build` enlazado al build de X-HEEP.
+- Exponer `workspace`, ya creado por el executor para un individuo y un step.
+- Transportar `execution_metadata` de la sesion mediante `resources`; la configuracion propia de la task permanece en `EvaluationTask.metadata`.
+- Mantener las tasks desacopladas del supervisor de procesos.
+
+No existen helpers de rutas, filesystem, logs ni comandos en `TaskContext`. Las
+tasks usan `pathlib`, `json`, `shutil` y `subprocess` directamente; si necesitan
+preservar symlinks al copiar un checkout, configuran `shutil.copytree` ellas mismas.
+Los archivos referenciados por `Artifact.files` deben existir dentro del
+`workspace` de la task productora al devolver la salida.
 
 Regla:
 
-- `ExecutionContext` no debe convertirse en configuracion de dominio.
+- `TaskContext` no debe convertirse en configuracion de dominio.
 - Informacion especifica como plantillas Vitis, datasets, toolchains o pesos de scoring debe vivir en tasks concretas, artefactos o configs propias.
 
-### `EvaluationTask`
+### `EvaluationOutput` y `EvaluationTask`
 
 Ubicacion: `src/genio/evaluation/task.py`
+
+`EvaluationOutput` es una dataclass inmutable que separa las metricas locales de los
+artefactos persistentes producidos por una task:
+
+```python
+metrics: Mapping[str, float] = field(default_factory=dict)
+artifacts: Mapping[str, Artifact] = field(default_factory=dict)
+```
+
+Cada clase de task puede declarar sus entradas como atributo de clase:
+
+```python
+requires: ClassVar[tuple[ArtifactInput, ...]] = (
+    ArtifactInput("hls_image_pipeline_synthesis.rtl_hls_synthesis", HLSRTLArtifact),
+)
+```
+
+`ArtifactInput(source, artifact_type)` identifica una clave cualificada y el
+tipo requerido. El step deriva `required_artifacts` y entrega solo el mapa requerido al campo
+`EvaluationTask.artifacts` al construir la task.
+
+Los nombres de metricas son locales al step (pueden contener puntos); el executor
+antepone `step_id.`. Las claves de `EvaluationOutput.artifacts` son nombres locales
+no vacios y sin puntos, elegidos dinamicamente por `run`; el executor los acumula internamente como `step_id.nombre`
+por individuo para los pasos siguientes. Por ejemplo, HLS devuelve metricas y un
+`HLSRTLArtifact` bajo `rtl_hls_synthesis`, mientras que las tasks funcional y
+X-HEEP devuelven solo metricas.
 
 Clase abstracta que representa una unidad ejecutable de evaluacion.
 
@@ -910,7 +933,9 @@ Campos:
 individual: Individual
 id: str | None
 step_id: str | None
+artifacts: Mapping[str, Artifact]
 metadata: Mapping[str, Any]
+runtime_state: dict[str, Any]
 ```
 
 Propiedad:
@@ -922,162 +947,69 @@ task_id: str
 Configuracion de ejecucion opcional:
 
 ```python
-metadata={
-    "execution": {
-        "timeout_seconds": 1800,
-    }
-}
+timeout_seconds=1800
 ```
 
-El helper `execution_timeout_seconds()` valida y devuelve este valor. La task HLS lo aplica al comando `v++`; al agotarse persiste logs y metadata con estado `timeout`, y lanza `HLSImagePipelineSynthesisTimeoutError`.
+`EvaluationStep.timeout_seconds` es opcional (`None` por defecto). El supervisor
+aplica el limite al proceso de la task, no solo a un comando `v++`.
 
 Metodo abstracto:
 
 ```python
-run(context: ExecutionContext) -> list[Artifact]
+run(context: TaskContext) -> EvaluationOutput
+on_timeout(context: TaskContext) -> None  # opcional
 ```
 
 Responsabilidades:
 
 - Encapsular una unidad concreta de trabajo.
 - Definir la receta real de ejecucion de un tipo de tarea.
-- Decidir su organizacion interna de directorios a partir de `context.base_work_dir`.
+- Decidir su organizacion interna de directorios dentro de `context.workspace`.
 - Invocar composers, plantillas o herramientas externas cuando su dominio lo requiera.
-- Devolver artefactos producidos.
+- Devolver metricas y artefactos producidos en `EvaluationOutput`.
+- Limpiar recursos externos en `on_timeout` solo cuando sea necesario; el estado
+  mutable compartido con `run` existe exclusivamente dentro del worker.
 
 ## 8. Infraestructura De Ejecucion
 
-### `CommandResult`
+### Supervisor De Procesos Locales
 
-Ubicacion: `src/genio/evaluation/task.py`
+`OptimizationSession` configura el executor, que inicia las tasks en procesos locales supervisados para
+cualquier valor de `max_workers`, incluido 1. No hay backends ni handles publicos.
+Los fallos de una task se convierten en `Result.failed` solo para su individuo;
+este no avanza a steps posteriores mientras el resto del batch continua.
 
-Resultado tipado devuelto por `ExecutionContext.run_command(...)`.
-
-Campos:
-
-```python
-command: tuple[str, ...]
-returncode: int
-stdout: str
-stderr: str
-cwd: Path | None
-```
-
-Responsabilidades:
-
-- Normalizar la salida de comandos externos.
-- Facilitar logs, depuracion y generacion de artefactos desde stdout/stderr.
-- Ejecutar cada comando en un grupo de procesos aislado y terminarlo completo si expira.
-
-### `Backend`
-
-Ubicacion: `src/genio/backend/base.py`
-
-Contrato abstracto para mecanismos de ejecucion.
-
-Interfaz:
-
-```python
-submit(task: EvaluationTask) -> EvaluationHandle
-submit_batch(tasks: Sequence[EvaluationTask]) -> list[EvaluationHandle]
-collect(handle: EvaluationHandle) -> list[Artifact]
-collect_batch(handles: Sequence[EvaluationHandle]) -> list[list[Artifact]]
-status(handle: EvaluationHandle) -> EvaluationState
-error(handle: EvaluationHandle) -> str | None
-cancel(handle: EvaluationHandle) -> bool
-shutdown(wait: bool = True, cancel_futures: bool = False) -> None
-```
-
-Responsabilidades:
-
-- Recibir tareas ejecutables.
-- Proporcionar infraestructura de ejecucion.
-- Crear `ExecutionContext`.
-- Devolver `EvaluationHandle`.
-- Exponer artefactos mediante `collect`.
-- Exponer estado mediante `status`.
-- Exponer errores mediante `error`.
-- Ofrecer cancelacion mediante `cancel`.
-- Gestionar explicitamente el ciclo de vida mediante `shutdown` y context manager.
-
-No debe:
-
-- Implementar logica especifica de cada tipo de tarea.
-- Saber como crear proyectos Vitis, clonar repositorios o generar pipelines concretos.
-
-### `LocalBackend`
-
-Ubicacion: `src/genio/backend/local.py`
-
-Backend local y sincrono.
-
-Constructor:
-
-```python
-LocalBackend(
-    base_work_dir: str | Path | None = None,
-    run_id: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-)
-```
-
-Responsabilidades:
-
-- Configurar o autoconfigurar `base_work_dir`.
-- Generar `run_id` si no se proporciona.
-- Crear un `ExecutionContext` por task.
-- Ejecutar `task.run(context)` en el proceso actual.
-- Guardar artefactos en memoria.
-- Guardar estados `RUNNING`, `DONE` y `FAILED`.
-- Registrar errores.
-- Devolver siempre un handle; los errores de la task se vuelven a lanzar desde `collect`.
-
-### `ParallelLocalBackend`
-
-Ubicacion: `src/genio/backend/parallel_local.py`
-
-Backend local concurrente basado en `ThreadPoolExecutor`.
-
-Constructor:
-
-```python
-ParallelLocalBackend(
-    max_workers: int,
-    max_pending: int | None = None,
-    base_work_dir: str | Path | None = None,
-    run_id: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-)
-```
-
-Responsabilidades:
-
-- Ejecutar hasta `max_workers` tasks locales simultaneas.
-- Limitar opcionalmente el numero de trabajos sin terminar mediante `max_pending`.
-- Mantener handles UUID, estados y errores protegidos frente a acceso concurrente.
-- Evitar dos tasks activas sobre el mismo workspace `individual/step`.
-- Cancelar tasks pendientes y terminar los grupos de procesos externos de tasks activas.
-- Conservar el orden de entrada al recoger batches.
-
-Una salida excepcional del context manager, incluido `KeyboardInterrupt`, solicita la
-cancelacion de todos los trabajos sin terminar antes de esperar al executor. Las tasks
-Python que no ejecutan comandos externos se cancelan cooperativamente al alcanzar el
-siguiente comando o al devolver el control al backend.
-
-Las aplicaciones deben convertir `SIGTERM` en una excepcion de Python y mantener el
-backend dentro de un context manager para activar este cierre ordenado. `SIGKILL` no
-permite ejecutar cleanup dentro del proceso y requiere supervision externa.
+`work_dir/workspaces/<individual>/<step>` contiene el workspace preparado de cada task. Los logs se escriben
+aparte bajo `work_dir/logs/<run_id>/<individual>/<step>` y se conservan aunque se
+elimine el workspace al cerrar el batch. El supervisor captura stdout/stderr del
+proceso Python en `stdout.log` y `stderr.log`; los subprocesos creados con
+`subprocess` heredan esas salidas y el grupo supervisado salvo que la task las
+capture deliberadamente. Las tasks integradas escriben sus propios archivos en
+`workspace/logs`, que se copian a `work_dir/logs/<run_id>/<individual>/<step>/task`
+antes de la limpieza del batch (si no se conserva el workspace).
+El timeout opcional de cada step limita la task completa. El supervisor envia
+`SIGTERM` al worker para que la clase base pueda ejecutar `on_timeout` y espera
+hasta tres segundos; despues termina el grupo completo con `SIGKILL` si sigue
+activo. El resultado de timeout se registra en la sesion incluso si el worker no
+alcanza a ejecutar el hook.
 
 Los recursos requeridos por implementaciones concretas se proporcionan mediante
-`metadata`, no mediante argumentos especializados del backend. Por ejemplo:
+`execution_metadata` en la sesion. Por ejemplo:
 
 ```python
-ParallelLocalBackend(
+from pathlib import Path
+
+# Ejecutar desde la raiz del checkout; en otro directorio, indicar su ruta absoluta.
+repo_root = Path.cwd().resolve()
+
+OptimizationSession(
+    ...,
     max_workers=2,
-    metadata={
+    work_dir=Path("tmp/work"),
+    execution_metadata={
         "vitis_libraries_path": "/path/to/Vitis_Libraries",
         "hls_include_paths": [
-            "/path/to/GENIO/hls_implementations/include",
+            str(repo_root / "hls_implementations/include"),
         ],
     },
 )
@@ -1085,8 +1017,9 @@ ParallelLocalBackend(
 
 La task HLS deriva `vision/L1/include` desde `vitis_libraries_path` y añade después
 los directorios opcionales de `hls_include_paths`. Estos últimos permiten resolver
-headers propios como `genio/identity.hpp` sin copiarlos al package. Otras tasks pueden
-declarar y consumir sus propias rutas sin modificar la interfaz del backend.
+headers propios como `genio/identity.hpp` del checkout.
+Otras tasks pueden
+declarar y consumir sus propias rutas sin modificar la interfaz de la sesion.
 
 `v++` se obtiene de `PATH`; la sesión debe iniciarse después de cargar mediante
 `source` el entorno Vitis deseado. Las diferencias de API de Vitis Libraries se
@@ -1094,11 +1027,11 @@ declaran como variantes `versions` dentro del JSON de implementación. El compos
 recibe `vitis_version` y genera directamente la llamada que corresponde al header
 original del checkout activo, sin reimplementar funciones de Vitis Vision.
 
-`tests/run_insect_random_search.py` detecta la versión desde `XILINX_VITIS`, admite
+`use_cases/insect_segmentation/run_random_search.py` detecta la versión desde `XILINX_VITIS`, admite
 el override `GENIO_VITIS_VERSION` y acepta `VITIS_LIBRARIES_PATH` para seleccionar
 el checkout de librerías que corresponde al entorno activo.
 
-El workflow puede continuar con `XHeepVerilatorSimulationEvaluationStep`, que consume
+El workflow puede continuar con `EvaluationStep(task_class=XHeepVerilatorSimulationTask)`, que consume
 el RTL `safa_fifo`, compone un overlay GR-HEEP aislado y ejecuta X-HEEP/Verilator en el
 entorno Conda `core-v-mini-mcu`. Esta task conserva los symlinks del checkout base,
 inyecta una imagen real o sintética, genera tráfico con un segundo DMA y extrae las
@@ -1107,136 +1040,19 @@ en [Evaluación de pipelines HLS en X-HEEP con SAFA](XHEEP_SAFA_EVALUATION.md).
 
 `EvaluationExecutor.evaluate_many` envia una ola por step del workflow. Los fallos de una task se convierten en `Result.failed` solo para su individual; ese individual no avanza a steps posteriores y el resto del batch continua. Los errores de contrato del framework siguen propagandose como excepciones.
 
-### `SSHBackend`
-
-Ubicacion: `src/genio/backend/ssh.py`
-
-Backend remoto preliminar que usa SSH como pasarela de comandos y `rsync` para
-transferir workspaces.
-
-Constructor principal:
-
-```python
-SSHBackend(
-    host: str,
-    remote_base_work_dir: str | PurePosixPath,
-    username: str | None = None,
-    local_staging_dir: str | Path | None = None,
-    port: int | None = None,
-    identity_file: str | Path | None = None,
-    ssh_options: Sequence[str] = (),
-    run_id: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    transfer_timeout: float | None = 60.0,
-)
-```
-
-Flujo por comando:
-
-```text
-materializacion local
-    -> rsync al cwd remoto
-    -> ejecucion mediante ssh y setsid
-    -> recuperacion del cwd mediante rsync
-    -> parsing y artifacts locales
-```
-
-La orquestacion de `task.run(context)` permanece en el cliente. Las operaciones de
-filesystem preparan el staging local y `run_command()` desplaza al host remoto solo
-el directorio de trabajo del comando. Los recursos de metadata se interpretan en
-el host remoto y deben usar rutas POSIX absolutas.
-
-Los paths relativos usados por helpers de filesystem o por `run_command(cwd=...)`
-se resuelven dentro de `individual/step`. La sincronizacion usa semantica espejo en
-ambas direcciones, de modo que los borrados remotos tambien se reflejan en staging.
-
-La version preliminar es sincrona: `submit()` termina la ejecucion antes de devolver
-el handle y `cancel()` devuelve `False`. Un timeout abre una segunda conexion SSH y
-termina mediante `SIGTERM`/`SIGKILL` el grupo remoto registrado en un marcador
-`.genio.<token>.pgid` unico para cada comando.
-El host remoto requiere `rsync` y una implementacion de `setsid` con `--wait`.
-
-### `ParallelSSHBackend`
-
-Ubicacion: `src/genio/backend/parallel_ssh.py`
-
-Version concurrente del gateway SSH. Comparte configuracion de transporte y creacion
-de contextos con `SSHBackend`, pero mantiene su propio lifecycle asincrono.
-
-```python
-ParallelSSHBackend(
-    host="fpga-worker",
-    max_workers=2,
-    max_pending=4,
-    remote_base_work_dir="/srv/genio/runs",
-    local_staging_dir="tmp/ssh-staging",
-    metadata={
-        "vitis_libraries_path": "/opt/xilinx/Vitis_Libraries",
-        "hls_include_paths": [
-            "/srv/GENIO/hls_implementations/include",
-        ],
-    },
-)
-```
-
-Responsabilidades:
-
-- Ejecutar hasta `max_workers` tasks SSH simultaneas mediante `ThreadPoolExecutor`.
-- Limitar opcionalmente los trabajos sin terminar mediante `max_pending`.
-- Exponer estados `PENDING`, `RUNNING`, `DONE`, `FAILED` y `CANCELLED`.
-- Cancelar tasks en cola y terminar los grupos de procesos remotos de tasks activas.
-- Evitar dos tasks activas sobre el mismo workspace remoto `individual/step`.
-- Mantener aislados tanto el staging local como el directorio remoto de cada task.
-- Repropagar desde `collect()` la excepcion original de transferencia o ejecucion.
-- Despertar con `BackendShutdownError` submissions bloqueados por `max_pending` al cerrar.
-
-La cancelacion de una task activa termina primero su proceso SSH local y despues usa
-una conexion de limpieza independiente para enviar `SIGTERM`/`SIGKILL` al PGID remoto.
-El mismo mecanismo se activa al salir excepcionalmente del context manager o cuando
-expira el timeout configurado por la task.
-
-Cada comando usa un token de cancelacion unico que el launcher comprueba al publicar
-su PGID. La cancelacion solo libera el workspace cuando recibe ese acuse y el PGID deja
-de existir. Si no puede confirmarse la terminacion, el workspace queda en cuarentena
-y sus marcadores impiden que otra sesion los borre mediante `rsync --delete`.
-
-### `EvaluationHandle`
-
-Ubicacion: `src/genio/backend/base.py`
-
-Identifica una tarea enviada al backend.
-
-Campos:
-
-```python
-id: str
-task_id: str | None
-backend_id: str | None
-metadata: Mapping[str, Any]
-payload: Any
-```
-
-### `EvaluationState`
-
-Ubicacion: `src/genio/backend/base.py`
-
-Estados normalizados de ejecucion:
-
-```python
-PENDING
-RUNNING
-DONE
-FAILED
-CANCELLED
-```
+El soporte SSH ha sido eliminado. Las tasks y los comandos se ejecutan solo en el
+host local; `execution_metadata` debe contener rutas accesibles en ese host.
 
 ## 9. Composicion
 
-### `Composer`, `ComposerError` y `StageDefinitionNotFoundError`
+### `Composer`, `ExecutionPackage`, `ComposerError` y `StageDefinitionNotFoundError`
 
-Ubicacion: `src/genio/composer/base.py`
+Ubicacion: `src/genio/composer.py`
 
 `Composer` es una clase abstracta para traducir un `Individual` a configuraciones, codigo, especificaciones o artefactos intermedios especificos de un dominio.
+`ExecutionPackage` es su base generica para paquetes materializables; las variantes
+`PythonExecutionPackage`, `HLSExecutionPackage` y `GRHeepConfigurationPackage`
+viven en `genio_use_cases`, junto a sus composers.
 
 Interfaz:
 
@@ -1259,67 +1075,13 @@ Responsabilidades:
 Regla:
 
 - Si un composer necesita plantillas, filesystem o materializacion, debe ejecutarse dentro de una `EvaluationTask.run(context)` o en una task especifica de composicion.
-- El backend no debe conocer composers concretos.
+- El supervisor de procesos no debe conocer composers concretos.
 
 `ComposerError` es la excepcion base del subsistema de composicion.
 
 `StageDefinitionNotFoundError` se lanza cuando un individuo referencia una etapa desconocida.
 
-## 10. Cache De Artifacts
-
-### `ArtifactCache`, `CacheEntry` y `LFUArtifactCache`
-
-Ubicacion:
-
-```text
-src/genio/cache/base.py
-src/genio/cache/lfu.py
-```
-
-La cache pertenece a `OptimizationSession`, se limpia al comenzar `run()` y es utilizada por `EvaluationExecutor` antes de enviar tasks al backend.
-
-Las tasks participan de forma opt-in:
-
-```python
-EvaluationTask.cache_inputs() -> Mapping[str, Any] | None
-```
-
-`None` mantiene la ejecucion normal. Las tasks funcional y HLS devuelven respectivamente:
-
-```text
-Python: pipeline
-HLS: pipeline + design.hls
-X-HEEP: pipeline + design.hls + design.system + RTL HLS + configuración GR-HEEP
-```
-
-`LFUArtifactCache` separa capacidades por `step.id`, expulsa la entrada con menor frecuencia y usa recencia como desempate. Los misses equivalentes de un mismo batch se agrupan y ejecutan mediante un unico representante. `storage_dir` configura el directorio dedicado a payloads cacheados; si se omite se crea uno temporal.
-
-Antes de publicar una entrada, la cache llama `Artifact.for_cache(target_dir)`. Los
-artifacts file-backed copian reports, RTL o logs y rebindean sus paths; un artifact
-personalizado debe implementar explicitamente esta operacion. Los hits se clonan mediante
-`Artifact.for_individual()` y nunca dependen del workspace del productor. Los fallos no
-se almacenan.
-
-Por defecto `OptimizationSession(keep_all_individuals=False)` elimina workspaces al cerrar
-cada batch, despues de statistics/checkpoint y de todos los steps downstream.
-`keep_all_individuals=True` conserva el comportamiento de depuracion. La expulsion LFU es
-logica durante el batch; `prune()` elimina payloads retirados al alcanzar la frontera
-segura de batch.
-
-Telemetria:
-
-```text
-hits
-misses
-stores
-evictions
-coalesced
-bypasses
-executions_avoided
-hit_rate
-```
-
-## 11. Estadisticas
+## 10. Estadisticas
 
 ### `StatisticsCollector`
 
@@ -1446,13 +1208,12 @@ OptimizationSession
 ├── search_space: SearchSpace
 ├── algorithm: SearchAlgorithm
 ├── objective_set: ObjectiveSet opcional, propiedad de la sesion
-├── backend: Backend
+├── max_workers, work_dir, execution_metadata
 ├── evaluation_workflow: EvaluationWorkflow
 │   └── steps: tuple[EvaluationStep, ...]
-│       └── task_type: type[EvaluationTask]
 ├── evaluation_executor: EvaluationExecutor
 │   ├── workflow: EvaluationWorkflow
-│   └── backend: Backend
+│   └── procesos locales supervisados
 └── statistics: StatisticsCollector
 ```
 
@@ -1462,7 +1223,6 @@ OptimizationSession
 classDiagram
     OptimizationSession --> SearchSpace : search_space
     OptimizationSession --> SearchAlgorithm : algorithm
-    OptimizationSession --> Backend : backend
     OptimizationSession --> EvaluationWorkflow : workflow
     OptimizationSession --> EvaluationExecutor : executor
     OptimizationSession --> StatisticsCollector : statistics
@@ -1480,33 +1240,43 @@ classDiagram
     SearchScenarioSpec --> SlotSpec : slots
     SlotSpec --> StageChoice : alternatives
     SearchSpace --> Individual : creates
-    Individual --> StageChoice : slots
+    Individual --> StageChoice : values.pipeline
 
     EvaluationWorkflow --> EvaluationStep : steps
-    EvaluationStep --> EvaluationTask : task_type/create_task()
+    EvaluationStep --> EvaluationTask : task_class y config
+    EvaluationTask --> ArtifactInput : requires opcional
     EvaluationExecutor --> EvaluationWorkflow : reads
     EvaluationExecutor --> EvaluationStep : create_task()
-    EvaluationExecutor --> Backend : submit/collect
+    EvaluationExecutor --> TaskContext : creates
     EvaluationExecutor --> Result : composes
 
-    Backend --> ExecutionContext : creates
-    Backend --> EvaluationHandle : submit(task)
-    Backend --> Artifact : collect()
-    LocalBackend --|> Backend
-    EvaluationTask --> ExecutionContext : run(context)
-    LocalBackend --> EvaluationTask : task.run(context)
+    EvaluationTask --> TaskContext : run(context)
+    EvaluationTask --> EvaluationOutput : run(context)
+    EvaluationOutput --> Artifact : artifacts[nombre local dinamico]
+    EvaluationExecutor --> Artifact : step_id.nombre por individuo
+    EvaluationExecutor --> EvaluationOutput : collects
+    EvaluationExecutor --> EvaluationTask : supervised process
 
     Evaluation --> Individual : individual
     Evaluation --> Result : result
     Result --> ResultStatus : status
-    MetricArtifact --|> Artifact
 
     StatisticsCollector --> Evaluation : observes
     StatisticsCollector --> SearchResult : observes
     InMemoryStatistics --|> StatisticsCollector
 
     Composer --> Individual : compose()
-    Artifact <|-- CustomArtifact
+    Composer --> ExecutionPackage : compose()
+    PythonExecutionPackage --|> ExecutionPackage
+    HLSExecutionPackage --|> ExecutionPackage
+    GRHeepConfigurationPackage --|> ExecutionPackage
+    Artifact <|-- HLSRTLArtifact : marker
+    PythonImagePipelineComposer --|> Composer : genio_use_cases.image_pipeline.python
+    HLSImagePipelineComposer --|> Composer : genio_use_cases.image_pipeline.hls
+    GRHeepConfigurationComposer --|> Composer : genio_use_cases.xheep.gr_heep
+    PythonImageFunctionalTask --|> EvaluationTask : genio_use_cases.image_pipeline
+    HLSImagePipelineSynthesisTask --|> EvaluationTask : genio_use_cases.image_pipeline
+    XHeepVerilatorSimulationTask --|> EvaluationTask : genio_use_cases.xheep
 ```
 
 ## Ejemplo Ejecutable
@@ -1515,15 +1285,13 @@ El siguiente ejemplo usa solo clases implementadas y reproduce el flujo basico c
 
 ```python
 from genio import (
-    Artifact,
     Evaluation,
     EvaluationStep,
     EvaluationTask,
+    EvaluationOutput,
     EvaluationWorkflow,
-    ExecutionContext,
+    TaskContext,
     Individual,
-    LocalBackend,
-    MetricArtifact,
     OptimizationSession,
     SearchAlgorithm,
     SearchScenarioSpec,
@@ -1532,33 +1300,10 @@ from genio import (
     StageChoice,
 )
 
-class ScoreArtifact(MetricArtifact):
-    def __init__(self, name: str, value, individual_id: str, producer: str = "example"):
-        super().__init__(
-            name=name,
-            producer=producer,
-            individual_id=individual_id,
-            metadata={"value": value},
-        )
-
-    def load(self):
-        return [self.metadata["value"]]
-
-    def metrics(self):
-        return {"score": self.metadata["value"]}
-
 class ScoreTask(EvaluationTask):
-    def run(self, context: ExecutionContext) -> list[Artifact]:
+    def run(self, context: TaskContext) -> EvaluationOutput:
         score = self.individual.search_index or 0
-        return [ScoreArtifact("score", score, self.individual.id)]
-
-class ScoreStep(EvaluationStep):
-    id = "score"
-    task_type = ScoreTask
-    produced_artifacts = {"score": ScoreArtifact}
-
-    def create_task(self, individual: Individual, artifacts):
-        return ScoreTask(individual=individual, step_id=self.id)
+        return EvaluationOutput(metrics={"score": float(score)})
 
 class FirstIndividualAlgorithm(SearchAlgorithm):
     def __init__(self) -> None:
@@ -1594,74 +1339,78 @@ session = OptimizationSession(
     id="example_session",
     search_space=search_space,
     algorithm=FirstIndividualAlgorithm(),
-    backend=LocalBackend(),
-    evaluation_workflow=EvaluationWorkflow((ScoreStep(),)),
+    max_workers=1,
+    evaluation_workflow=EvaluationWorkflow((
+        EvaluationStep(id="score", task_class=ScoreTask, config={}),
+    )),
 )
 
 result = session.run()
 score = result.evaluations[0].result.metrics["score.score"]
 ```
 
-## Ejemplo De `MetricArtifact`
+## Ejemplo De `EvaluationOutput`
 
-Este ejemplo usa la clase abstracta real `MetricArtifact` y una implementacion concreta equivalente a la usada en tests.
+Las metricas se declaran independientemente de los artefactos. Una task crea sus
+archivos antes de devolver las salidas que necesita un step posterior:
 
 ```python
+import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
-from genio import MetricArtifact
+from genio import Artifact, EvaluationOutput, EvaluationTask, TaskContext
 
 @dataclass(frozen=True, slots=True)
-class ScoreArtifact(MetricArtifact):
-    values: Mapping[str, float]
+class ReportTask(EvaluationTask):
+    def run(self, context: TaskContext) -> EvaluationOutput:
+        path = context.workspace / "report.json"
+        path.write_text(json.dumps({"f1": 0.9}), encoding="utf-8")
+        return EvaluationOutput(
+            metrics={"f1": 0.9, "latency": 12.0},
+            artifacts={"report": Artifact(
+                data={"format": "json"}, files={"report": path}
+            )},
+        )
 
-    def load(self) -> Sequence[Any]:
-        return [dict(self.values)]
-
-    def metrics(self) -> Mapping[str, float]:
-        return self.values
-
-artifact = ScoreArtifact(
-    name="scores",
-    producer="ScoreTask",
-    individual_id="individual_001",
-    objective="quality",
-    values={"f1": 0.9, "latency": 12.0},
-)
-
-metrics = artifact.metrics()
+# EvaluationStep(id="score", task_class=ReportTask, config={}) ejecuta la task.
+# El executor agrega "score.f1" y "score.latency" a Result.metrics.
+# El artefacto queda disponible como "score.report" para otros steps.
 ```
 
-## Ejemplo De Helpers De `ExecutionContext`
+Con la limpieza por defecto, el contenido de `files` deja de estar disponible tras
+el batch; usar `keep_all_individuals=True` o copiarlo fuera del workspace para
+conservarlo.
 
-Este ejemplo usa helpers ya implementados para rutas, escritura de ficheros y comandos. El comando usa el interprete de Python para mantenerlo portable.
+## Ejemplo De Uso De `TaskContext`
+
+El supervisor crea `context.workspace` antes de ejecutar la task. La task usa
+`pathlib`, `json` y `subprocess` directamente; el comando usa el interprete de
+Python para mantenerlo portable.
 
 ```python
+import json
+import subprocess
 import sys
-from pathlib import Path
-from genio import ExecutionContext, EvaluationTask, Individual, StageChoice
+from genio import EvaluationOutput, TaskContext, EvaluationTask
 
-class HelperTask(EvaluationTask):
-    def run(self, context: ExecutionContext):
-        task_dir = context.ensure_dir(context.task_dir(self))
-        config_path = context.write_json(task_dir / "config.json", {"ok": True})
-        log_path = context.write_log(self, "task.log", "started")
-        result = context.run_command(
+class ExampleTask(EvaluationTask):
+    def run(self, context: TaskContext) -> EvaluationOutput:
+        config_path = context.workspace / "config.json"
+        config_path.write_text(json.dumps({"ok": True}, indent=2), encoding="utf-8")
+        log_dir = context.workspace / "logs"
+        log_dir.mkdir(exist_ok=True)
+        (log_dir / "task.log").write_text("started\n", encoding="utf-8")
+        subprocess.run(
             [sys.executable, "-c", "print('hello')"],
-            cwd=task_dir,
+            cwd=context.workspace,
+            check=True,
         )
-        return []
-
-individual = Individual.from_slots(
-    id="individual_001",
-    scenario="helpers_space",
-    slots=[StageChoice(slot=0, stage="nop")],
-)
-
-context = ExecutionContext(base_work_dir=Path("/tmp/genio-example"))
-task = HelperTask(individual=individual, step_id="helpers")
-artifacts = task.run(context)
+        return EvaluationOutput()
 ```
+
+El stdout del comando llega al log supervisado; para analizarlo en Python se puede
+usar `subprocess.run(..., capture_output=True, text=True)` y escribirlo en
+`workspace/logs` si se quiere conservar. El timeout del step sigue cubriendo
+toda la ejecucion de la task.
 
 ## Clases Eliminadas En El Refactor
 
@@ -1680,7 +1429,7 @@ Fue eliminado como abstraccion publica.
 Modelo actual:
 
 ```text
-LocalBackend -> EvaluationTask.run(ExecutionContext) -> list[Artifact]
+OptimizationSession -> proceso local -> EvaluationTask.run(TaskContext) -> EvaluationOutput
 ```
 
 ### `SearchEngine`
@@ -1697,7 +1446,6 @@ Fue eliminado porque no existe una evaluacion por defecto independiente del domi
 
 ## Puntos Pendientes
 
-- Definir si se necesitan helpers adicionales de `ExecutionContext` para casos no cubiertos por rutas, ficheros, JSON, copias, logs, entorno y comandos.
 - Definir objetivos/fitness sobre las claves disponibles en `Result.metrics`.
 - Definir politica de errores: convertir fallos de tasks en `Result.failed` o propagar excepciones.
 - Separar implementaciones concretas de algoritmos en modulos como `algorithm/random.py`, `algorithm/grid.py` o adaptadores externos.

@@ -27,6 +27,7 @@ from genio.checkpoint.errors import (
 from genio.core.evaluation import Evaluation
 from genio.core.individual import Individual
 from genio.objective.runtime import EvaluatedBatch
+from genio.objective.scalarization import Scalarizer
 from genio.search_space.space import SearchSpace
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +62,9 @@ class GeneticSearch(SearchAlgorithm):
 
     Selection fitness comes from the aggregate scores prepared by the session's
     objective runtime. Failed evaluations and evaluations with invalid
-    objective values receive zero fitness. Generation and global bests use only
-    scores already committed through ``tell``.
+    objective values receive zero fitness. Generation bests use the batch
+    aggregate scores; an optional stable scalarizer compares global bests
+    across generations using unnormalized, maximize-oriented values.
 
     The search space is bound on first use and the same ``SearchSpace`` object
     must be used for the lifetime of the algorithm.
@@ -80,6 +82,7 @@ class GeneticSearch(SearchAlgorithm):
         balanced_initialization: bool = True,
         initial_population: Sequence[Sequence[int]] | None = None,
         random: Random | None = None,
+        global_best_scalarizer: Scalarizer | None = None,
     ) -> None:
         """Configure the generational genetic search.
 
@@ -100,6 +103,8 @@ class GeneticSearch(SearchAlgorithm):
             random: Pseudo-random generator used by sampling, selection,
                 crossover, and mutation. A new unseeded generator is created
                 when omitted.
+            global_best_scalarizer: Optional scorer for comparing global bests
+                across generations on raw maximize-oriented objective values.
 
         Raises:
             ValueError: If scalar configuration or initial population size is
@@ -140,8 +145,13 @@ class GeneticSearch(SearchAlgorithm):
             raise ValueError(
                 "initial_population is required when start_generation is not 1."
             )
+        if global_best_scalarizer is not None and not isinstance(
+            global_best_scalarizer, Scalarizer
+        ):
+            raise TypeError("global_best_scalarizer must be a Scalarizer or None.")
 
         self.random = random or Random()
+        self.global_best_scalarizer = global_best_scalarizer
         self._search_space: SearchSpace | None = None
         self._pending_generation: tuple[Individual, ...] | None = None
         self._last_evaluations: tuple[Evaluation, ...] = ()
@@ -162,15 +172,26 @@ class GeneticSearch(SearchAlgorithm):
             raise ValueError("GeneticSearch requires an objective schema.")
         if not context.has_scalarizer:
             raise ValueError("GeneticSearch requires an objective scalarizer.")
+        if self.global_best_scalarizer is not None:
+            self.global_best_scalarizer.validate(context.objective_schema)
         generation_count = max(0, self.max_generations - self.start_generation + 1)
-        if generation_count > 1 and context.normalization_scope in {
-            "batch",
-            "cumulative",
-        }:
+        if generation_count > 1 and (
+            context.normalization_scope == "cumulative"
+            or (
+                context.normalization_scope == "batch"
+                and self.global_best_scalarizer is None
+            )
+        ):
+            remedy = "use fixed normalization or disable normalization."
+            if context.normalization_scope == "batch":
+                remedy = (
+                    "provide a global_best_scalarizer, use fixed normalization, "
+                    "or disable normalization."
+                )
             raise ValueError(
                 f"{context.normalization_scope.upper()} normalization cannot produce "
                 "fitness values comparable across multiple GeneticSearch generations; "
-                "use fixed normalization or disable normalization."
+                f"{remedy}"
             )
         super().configure(context)
 
@@ -260,16 +281,27 @@ class GeneticSearch(SearchAlgorithm):
         )
         global_best = self._global_best
         global_best_fitness = self._global_best_fitness
-        if (
-            generation_best is not None
-            and generation_best_fitness is not None
-            and (
-                global_best_fitness is None
-                or generation_best_fitness > global_best_fitness
-            )
-        ):
-            global_best = generation_best
-            global_best_fitness = generation_best_fitness
+        if self.global_best_scalarizer is None:
+            if (
+                generation_best is not None
+                and generation_best_fitness is not None
+                and (
+                    global_best_fitness is None
+                    or generation_best_fitness > global_best_fitness
+                )
+            ):
+                global_best = generation_best
+                global_best_fitness = generation_best_fitness
+        else:
+            items_by_id = {item.individual.id: item for item in batch.items}
+            for index in valid_indexes:
+                evaluation = ordered[index]
+                values = items_by_id[evaluation.individual.id].objective_values
+                assert values is not None
+                score = self._global_score(batch.objective_names, values.maximize)
+                if global_best_fitness is None or score > global_best_fitness:
+                    global_best = evaluation.individual
+                    global_best_fitness = score
 
         if generation_best is not None:
             self._generation_bests.append(generation_best)
@@ -346,6 +378,11 @@ class GeneticSearch(SearchAlgorithm):
             "max_generations": self.max_generations,
             "start_generation": self.start_generation,
             "balanced_initialization": self.balanced_initialization,
+            "global_best_scalarizer": (
+                self.global_best_scalarizer.checkpoint_signature()
+                if self.global_best_scalarizer is not None
+                else None
+            ),
             "initial_population": (
                 [list(genotype) for genotype in self.initial_population]
                 if self.initial_population is not None
@@ -468,15 +505,34 @@ class GeneticSearch(SearchAlgorithm):
             valid_items = tuple(item for item in batch.items if item.valid)
             if not valid_items:
                 continue
+            if self.global_best_scalarizer is not None:
+                valid_items = tuple(
+                    sorted(
+                        valid_items,
+                        key=lambda item: item.individual.metadata["algorithm"][
+                            "population_index"
+                        ],
+                    )
+                )
             best_item = max(
                 valid_items,
                 key=lambda item: fitnesses[item.individual.id],
             )
             best_fitness = fitnesses[best_item.individual.id]
             generation_bests.append(best_item.individual)
-            if global_best_fitness is None or best_fitness > global_best_fitness:
-                global_best = best_item.individual
-                global_best_fitness = best_fitness
+            if self.global_best_scalarizer is None:
+                if global_best_fitness is None or best_fitness > global_best_fitness:
+                    global_best = best_item.individual
+                    global_best_fitness = best_fitness
+            else:
+                for item in valid_items:
+                    assert item.objective_values is not None
+                    score = self._global_score(
+                        batch.objective_names, item.objective_values.maximize
+                    )
+                    if global_best_fitness is None or score > global_best_fitness:
+                        global_best = item.individual
+                        global_best_fitness = score
 
         self.random.setstate(random_state)
         self._search_space = search_space
@@ -491,6 +547,25 @@ class GeneticSearch(SearchAlgorithm):
         self._global_best_fitness = global_best_fitness
         self._asked_generations = asked_generations
         self._next_generation = next_generation
+
+    def _global_score(
+        self, objective_names: Sequence[str], maximize: Sequence[float]
+    ) -> float:
+        """Validate a stable global-best score before updating search state."""
+
+        assert self.global_best_scalarizer is not None
+        score = self.global_best_scalarizer.scalarize(objective_names, maximize)
+        if isinstance(score, bool) or not isinstance(score, Real):
+            raise ValueError("Global best scalarizer must return a finite real number.")
+        try:
+            numeric = float(score)
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "Global best scalarizer must return a finite real number."
+            ) from exc
+        if not isfinite(numeric):
+            raise ValueError("Global best scalarizer must return a finite real number.")
+        return numeric
 
     def _bind_search_space(self, search_space: SearchSpace) -> SearchSpace:
         """Bind once to a search space with non-empty genotype domains."""
@@ -547,11 +622,14 @@ class GeneticSearch(SearchAlgorithm):
         """
 
         genes: list[int] = []
-        slot_count = len(search_space.slot_lengths)
+        slot_indexes = {
+            position: slot_index
+            for slot_index, position in enumerate(search_space.slot_gene_positions)
+        }
         for position, length in enumerate(search_space.genotype_lengths):
-            if balanced and position < slot_count:
+            if balanced and position in slot_indexes:
                 _, gene = search_space.sample_slot_balanced(
-                    position,
+                    slot_indexes[position],
                     random=self.random,
                 )
             else:
@@ -674,9 +752,13 @@ class GeneticSearch(SearchAlgorithm):
 
         position = self.random.randrange(len(candidate.genotype))
         genes = list(candidate.genotype)
-        if position < len(search_space.slot_lengths):
+        slot_indexes = {
+            gene_position: slot_index
+            for slot_index, gene_position in enumerate(search_space.slot_gene_positions)
+        }
+        if position in slot_indexes:
             _, genes[position] = search_space.sample_slot_balanced(
-                position,
+                slot_indexes[position],
                 random=self.random,
             )
         else:

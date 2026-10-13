@@ -1,12 +1,16 @@
 # Manual De Extensibilidad De GENIO
 
-Este documento describe como extender GENIO a partir de sus clases abstractas y contratos base. El objetivo es servir como manual de usuario para implementar nuevos dominios de evaluacion, algoritmos de busqueda, backends, artefactos, objetivos, compositores y recolectores de estadisticas.
+Este documento describe como extender GENIO a partir de sus clases abstractas y contratos base. El objetivo es servir como manual de usuario para implementar nuevos dominios de evaluacion, algoritmos de busqueda, tareas, artefactos, objetivos, compositores y recolectores de estadisticas.
 
 GENIO separa tres ideas principales:
 
 - El framework define contratos estables.
 - Las extensiones concretas implementan logica de dominio.
 - Los algoritmos de busqueda consumen `EvaluatedBatch`, no artefactos ni detalles de ejecucion.
+
+Las bases y los algoritmos genericos se importan de `genio` (`src/genio`). Las extensiones instalables de imagen y X-HEEP estan en `genio_use_cases.image_pipeline` y `genio_use_cases.xheep` (`src/genio_use_cases`), respectivamente. `PythonImagePipelineComposer`/`PythonExecutionPackage` viven en `genio_use_cases.image_pipeline.python`, `HLSImagePipelineComposer`/`HLSExecutionPackage` en `.hls`, `PythonImageFunctionalTask` en `.image_functional`, `HLSImagePipelineSynthesisTask` en `.hls_image_pipeline_synthesis`, `HLSRTLArtifact` en `.hls_synthesis`, los parsers HLS en `.hls_reports`, y `GRHeepConfigurationComposer`/`GRHeepConfigurationPackage` y `XHeepVerilatorSimulationTask` en `genio_use_cases.xheep.gr_heep` y `.xheep_verilator_simulation`. Las clases tambien se reexportan desde los paquetes de dominio.
+
+Los runners y escenarios de `use_cases/insect_segmentation` y `use_cases/date_experiments` son experimentos en la raiz del repositorio, no forman parte de los paquetes instalables. Los JSON de escenario estan en `use_cases/insect_segmentation/scenarios/`. Desde la raiz se pueden ejecutar con `python -m use_cases.insect_segmentation.run_random_search`, `python -m use_cases.insect_segmentation.run_population_search`, `python -m use_cases.insect_segmentation.run_genetic_search` y `python -m use_cases.date_experiments.run`. Instalar las dependencias opcionales con `pip install -e '.[image_pipeline]'` o `pip install -e '.[image_pipeline,xheep]'`; los toolchains externos requieren configuracion aparte. El paquete instalado solo contiene codigo: el llamador debe proporcionar los directorios de recursos `search_space/stages`, `hls_templates`, `hls_implementations` y `gr_heep_templates` del checkout.
 
 ## Vista General
 
@@ -17,9 +21,9 @@ OptimizationSession configura SearchAlgorithm con SearchContext
 SearchAlgorithm.ask()
         -> Individual[]
 EvaluationWorkflow
-        -> EvaluationStep.create_task(...)
+        -> EvaluationStep(task_class=..., config=...).create_task(...)
         -> EvaluationTask.run(context)
-        -> Artifact[] / MetricArtifact[]
+        -> EvaluationOutput(metrics, artifacts)
 EvaluationExecutor
         -> Result.metrics
 ObjectiveRuntime interno
@@ -35,8 +39,8 @@ SearchContext
 EvaluationStep
 EvaluationTask
 Artifact
-MetricArtifact
-Backend
+EvaluationOutput
+TaskContext
 Composer
 Objective
 ObjectiveSet
@@ -50,17 +54,18 @@ StatisticsCollector
 GENIO espera que cada extension respete estas reglas:
 
 - `SearchAlgorithm` decide que individuos evaluar y como usar los resultados.
-- `EvaluationStep` declara un paso logico del workflow y crea una task.
-- `EvaluationTask` ejecuta trabajo real usando un `ExecutionContext`.
-- `Backend` proporciona infraestructura, no logica de dominio.
+- `EvaluationStep` configura una clase de task y crea una instancia por individuo.
+- `EvaluationTask` ejecuta trabajo real usando un `TaskContext`.
+- La sesion supervisa procesos locales; no hay backends configurables.
 - `Artifact` transporta salidas entre steps.
-- `MetricArtifact` expone metricas numericas que se agregan en `Result.metrics`.
+- `EvaluationOutput` separa las metricas numericas de los artefactos; el executor agrega las primeras en `Result.metrics`.
 - `Result` no contiene artefactos; solo estado, metricas y error.
 - `ObjectiveSet` configura en la sesion la extraccion, normalizacion y scalarizacion.
 - `ObjectiveRuntime` mantiene estado aislado de una sesion y entrega `EvaluatedBatch`.
 - Cada algoritmo decide la semantica de `best_individuals()`.
 - El analisis historico pertenece a las estadisticas y herramientas posteriores, no a `ObjectiveSet`.
 - `Composer` ayuda a traducir individuos a representaciones de dominio.
+- `ExecutionPackage` define la base generica para el paquete materializable que puede producir un composer; sus subclases Python, HLS y GR-HEEP estan en `genio_use_cases`.
 - `StatisticsCollector` observa eventos de sesion sin modificar el flujo.
 
 ## 1. Extender Algoritmos De Busqueda
@@ -103,7 +108,7 @@ Responsabilidades:
 No debe:
 
 - Ejecutar tasks directamente.
-- Leer artefactos intermedios del backend.
+- Leer artefactos intermedios de otras tareas.
 - Conocer detalles de Vitis, OpenCV, datasets o plantillas.
 
 ### `SearchContext`
@@ -120,7 +125,7 @@ SearchContext(
 )
 ```
 
-No expone el `ObjectiveSet` ejecutable, backend, workflow ni sesion completa.
+No expone el `ObjectiveSet` ejecutable, workflow ni sesion completa.
 `configure()` es idempotente si recibe un contexto igual y rechaza cambiarlo despues.
 Una subclase debe validar sus requisitos antes de llamar a `super().configure(context)`.
 
@@ -495,121 +500,87 @@ serializables como JSON; las clases base rechazan una firma implicita.
 Clases base:
 
 ```python
-from genio import Artifact, MetricArtifact, ArtifactError
+from genio import Artifact, EvaluationOutput
 ```
 
 ### `Artifact`
 
-Representa una salida producida por una task y consumible por steps posteriores.
+`Artifact[T]` es una dataclass concreta, generica, frozen y slotted. Transporta
+datos estructurados pequenos y archivos producidos por una task para steps posteriores.
 
 Campos:
 
 ```python
-name: str
-producer: str
-individual_id: str
-objective: str | None
-metadata: dict[str, Any]
+data: T | None = None
+files: Mapping[str, Path] = field(default_factory=dict)
 ```
 
-Metodo obligatorio:
+`data` debe poder transportarse con `pickle`; `files` asocia nombres logicos a
+rutas de archivos existentes dentro del workspace de la task productora. No hay
+`load()`, ni campos `name`, `producer`, `individual_id`, `objective` o `metadata`.
+No es necesario crear una subclase para representar un archivo:
 
 ```python
-load() -> Sequence[Any]
-```
-
-Ejemplo:
-
-```python
-from dataclasses import dataclass
-from pathlib import Path
 from genio import Artifact
 
-@dataclass(frozen=True, slots=True)
-class FileArtifact(Artifact):
-    path: Path
-
-    def load(self):
-        return [self.path.read_text()]
+# Dentro de run(context), despues de crear el archivo:
+path = context.workspace / "pipeline.json"
+path.write_text('{"ok": true}', encoding="utf-8")
+artifact = Artifact[dict[str, str]](data={"format": "json"}, files={"pipeline": path})
 ```
 
-### `MetricArtifact`
+`HLSRTLArtifact` es una subclase marcador de `Artifact[Mapping[str, Any]]`.
+Se importa de `genio_use_cases.image_pipeline`, no de `genio`.
+Su `data` contiene `origin`, `top_function`, `interface` y metadatos de imagen;
+sus `files` usan nombres `verilog/<path>` o `vhdl/<path>` para el RTL que consume
+X-HEEP. No anade campos ni metodos de carga.
 
-Subclase de `Artifact` para artefactos que exponen metricas numericas.
+### `EvaluationOutput`
 
-Metodo obligatorio adicional:
+Dataclass inmutable definida en `genio.evaluation.task`. Una task devuelve metricas
+locales y, por separado, los artefactos persistentes que necesitan otros steps:
 
 ```python
-metrics() -> Mapping[str, float]
+metrics: Mapping[str, float] = field(default_factory=dict)
+artifacts: Mapping[str, Artifact] = field(default_factory=dict)
 ```
 
-Ejemplo:
-
-```python
-from dataclasses import dataclass
-from collections.abc import Mapping, Sequence
-from copy import deepcopy
-from typing import Any
-from genio import MetricArtifact
-
-@dataclass(frozen=True, slots=True)
-class ReportMetrics(MetricArtifact):
-    values: Mapping[str, float]
-
-    def load(self) -> Sequence[Any]:
-        return [dict(self.values)]
-
-    def metrics(self) -> Mapping[str, float]:
-        return self.values
-
-    def for_cache(self, target_dir):
-        # No contiene paths; una copia profunda es suficiente.
-        return deepcopy(self)
-```
-
-Si este artefacto lo devuelve un step con id `hls`, las metricas se agregan como:
-
-```python
-{
-    "hls.latency": 120.0,
-    "hls.lut": 3021.0,
-}
-```
+Por ejemplo, `EvaluationOutput(metrics={"latency": 120.0, "lut": 3021.0})`
+devuelto por el step `hls` produce `hls.latency` y `hls.lut` en `Result.metrics`.
+Las tasks concretas HLS y X-HEEP conservan ademas sus espacios locales
+`hls_synthesis.*` y `xheep_verilator.*`, respectivamente.
 
 Reglas importantes:
 
-- `metrics()` debe devolver valores numericos.
+- `EvaluationOutput.metrics` debe ser un mapa de nombres locales no vacios a valores numericos.
 - Los booleanos no se aceptan como metricas.
 - Las claves duplicadas provocan `EvaluationExecutionError`.
-- Los artefactos no metricos no aparecen en `Result`.
-- Los artefactos no metricos solo sirven para steps posteriores o persistencia externa futura.
+- `EvaluationOutput.artifacts` es un mapa dinamico de nombres locales no vacios y sin puntos
+  a instancias de `Artifact`; el executor los acumula como `step_id.nombre` por individuo.
+- Los artefactos no aparecen en `Result`.
+- Los artefactos sirven para steps posteriores o persistencia externa futura.
 
-### Persistencia En Cache
+El descriptor de clase `ArtifactInput(source, artifact_type)` define una entrada
+cualificada y su tipo; el step deriva `required_artifacts` de `requires`. No se
+declaran las salidas por clase: `run` las devuelve en `EvaluationOutput.artifacts`.
+Si un productor termina con exito pero no entrega una entrada requerida o entrega
+un tipo incompatible, `EvaluationExecutionError` aborta la sesion. Una salida no
+transportable por `pickle` tambien es un error de contrato; en cambio, una excepcion
+durante `run()` solo falla al individuo correspondiente.
 
-`OptimizationSession` elimina por defecto los workspaces al cerrar cada batch. Para que
-una entrada sobreviva, todo `Artifact` cacheable implementa:
-
-```python
-def for_cache(self, target_dir: Path) -> Artifact:
-    ...
-```
-
-- Un artifact en memoria devuelve una copia independiente.
-- Un artifact file-backed copia solo sus payloads necesarios bajo `target_dir` y devuelve
-  otra instancia con paths rebindeados.
-- La implementacion base falla de forma segura, porque no puede inferir paths ocultos en
-  metadata.
-- `LFUArtifactCache(storage_dir=...)` mantiene esos payloads fuera de los workspaces.
-- Una expulsion se elimina fisicamente mediante `prune()` al terminar el batch, no mientras
-  un step downstream podria seguir usando el artifact.
-- `keep_all_individuals=True` conserva workspaces completos para depuracion.
+`OptimizationSession` elimina por defecto los workspaces de `work_dir/workspaces`
+al cerrar cada batch; `keep_all_individuals=True` los conserva para depuracion.
+Los logs se conservan por separado bajo `work_dir/logs`.
+Las referencias a archivos generados solo son validas durante el batch por defecto;
+para conservarlos despues hay que activar `keep_all_individuals=True` o copiarlos
+fuera del workspace por separado.
 
 ## 4. Extender Tareas Ejecutables
 
 Clase base:
 
 ```python
-from genio import EvaluationTask, ExecutionContext
+from genio import EvaluationTask, TaskContext
 ```
 
 Contrato:
@@ -620,104 +591,128 @@ class EvaluationTask(ABC):
     individual: Individual
     id: str | None = None
     step_id: str | None = None
+    artifacts: Mapping[str, Artifact] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    runtime_state: dict[str, Any] = field(default_factory=dict, init=False)
+    requires: ClassVar[tuple[ArtifactInput, ...]] = ()
 
     @property
     def task_id(self) -> str:
         ...
 
-    def run(self, context: ExecutionContext) -> list[Artifact]:
+    def run(self, context: TaskContext) -> EvaluationOutput:
         ...
+
+    def on_timeout(self, context: TaskContext) -> None:
+        pass
 ```
 
 Responsabilidades:
 
 - Ejecutar una unidad concreta de trabajo.
-- Usar `ExecutionContext` para filesystem, logs, comandos y rutas.
-- Crear y devolver artefactos.
+- Declarar entradas cualificadas con `ArtifactInput(source, artifact_type)` en `requires`.
+- Leer los artefactos requeridos en `self.artifacts[source]`, inyectados por el step.
+- Usar `context.workspace` para archivos y `context.resources` para recursos de la sesion; gestionar filesystem, logs y comandos con la biblioteca estandar.
+- Devolver `EvaluationOutput` con metricas y artefactos nombrados dinamicamente.
 - Encapsular logica de dominio.
+
+Opcionalmente, una subclase declara `uses_domains = ("pipeline", "hls")` como
+atributo de clase **sin anotacion de dataclass** para limitar los dominios de
+`Individual.values` relevantes para su cache. Si se omite, se asume que usa todos.
+Las tasks integradas declaran `("pipeline",)` para funcional, `("pipeline", "hls")`
+para sintesis y `("system",)` para X-HEEP. El executor anade transitivamente los
+dominios de los productores de artefactos requeridos; por ello la cache de X-HEEP
+tambien depende de `pipeline` y `hls` a traves del RTL HLS. Declare solo los
+dominios que realmente afectan a la salida propia de la task.
+
+`on_timeout` es opcional y solo se llama dentro del proceso hijo cuando el supervisor
+envia `SIGTERM` por vencimiento del plazo. Puede usar `runtime_state` para acceder a
+datos que `run` guardo en ese mismo proceso (por ejemplo, el identificador de un
+contenedor). La clase base gestiona la interrupcion; las extensiones no instalan
+handlers ni sobrescriben `_execute`. El supervisor espera hasta tres segundos antes
+de terminar el grupo con `SIGKILL` si la tarea o el hook no concluyen. El hook no
+puede garantizar limpieza si el proceso no atiende la senal, por lo que recursos
+externos criticos pueden requerir una via adicional basada en IDs persistidos.
+
+Por ejemplo, una task que usa Docker puede guardar
+`self.runtime_state["container_name"]` antes de esperar a `docker run` y definir
+un hook sin instalar ninguna senal por su cuenta:
+
+```python
+def on_timeout(self, context: TaskContext) -> None:
+    name = self.runtime_state.get("container_name")
+    if name:
+        subprocess.run(["docker", "rm", "-f", name], timeout=2, check=False)
+```
 
 No debe:
 
 - Modificar directamente el estado del algoritmo.
 - Decidir objetivos de optimizacion.
-- Depender de un backend concreto si puede evitarse.
+- Depender de transporte remoto o de un backend eliminado.
 
 ### Ejemplo De Task
 
 ```python
-from genio import EvaluationTask, ExecutionContext, Artifact
+import json
+from genio import EvaluationTask, EvaluationOutput, TaskContext
 
 class FunctionalEvaluationTask(EvaluationTask):
-    def run(self, context: ExecutionContext) -> list[Artifact]:
-        task_dir = context.ensure_dir(context.task_dir(self))
-        report_path = context.write_json(task_dir / "report.json", {"f1": 0.91})
-        return [
-            ReportMetrics(
-                name="metrics",
-                producer=self.step_id or "functional",
-                individual_id=self.individual.id,
-                values={"f1": 0.91},
-            )
-        ]
+    def run(self, context: TaskContext) -> EvaluationOutput:
+        (context.workspace / "report.json").write_text(
+            json.dumps({"f1": 0.91}), encoding="utf-8"
+        )
+        return EvaluationOutput(metrics={"f1": 0.91})
 ```
 
-## 5. Usar `ExecutionContext`
+## 5. Usar `TaskContext`
 
-`ExecutionContext` lo crea el backend y se entrega a cada task.
+`TaskContext` lo crea el worker local supervisado y se entrega a cada task.
+El executor ya ha creado `workspace` para ese individuo y step.
 
 Campos:
 
 ```python
-base_work_dir: Path
-run_id: str | None
-backend_id: str | None
-metadata: Mapping[str, Any]
+workspace: Path
+resources: Mapping[str, Any] = field(default_factory=dict)
 ```
 
-Helpers disponibles:
-
-```python
-resolve_path(path)
-task_dir(task, *parts)
-artifact_path(task, *parts)
-log_path(task, *parts)
-ensure_dir(path)
-ensure_parent(path)
-write_text(path, content)
-read_text(path)
-write_bytes(path, content)
-read_bytes(path)
-write_json(path, data)
-read_json(path)
-copy_file(source, target)
-copy_tree(source, target)
-write_log(task, name, content)
-merged_env(env=None)
-run_command(command, cwd=None, env=None, timeout=None, check=True)
-```
+`resources` contiene el `execution_metadata` de la sesion; no debe confundirse
+con `EvaluationTask.metadata`. `TaskContext` no ofrece helpers ni `CommandResult`.
+Usar `pathlib` y `json` para archivos, `shutil` para copias y `subprocess` para
+comandos. Colocar los archivos referenciados por `Artifact.files` dentro del
+workspace de la task productora y crearlos antes de devolver `EvaluationOutput`.
 
 Ejemplo:
 
 ```python
+import subprocess
+import sys
+
 class CommandTask(EvaluationTask):
-    def run(self, context):
-        workdir = context.ensure_dir(context.task_dir(self))
-        result = context.run_command(
-            ["python", "-c", "print('ok')"],
-            cwd=workdir,
+    def run(self, context: TaskContext) -> EvaluationOutput:
+        log_dir = context.workspace / "logs"
+        log_dir.mkdir(exist_ok=True)
+        (log_dir / "task.log").write_text("started\n", encoding="utf-8")
+        subprocess.run(
+            [sys.executable, "-c", "print('ok')"],
+            cwd=context.workspace,
+            check=True,
         )
-        context.write_log(self, "stdout.log", result.stdout)
-        return []
+        return EvaluationOutput()
 ```
+
+Por defecto `subprocess.run` hereda stdout/stderr y el grupo de procesos
+supervisado; usar `capture_output=True, text=True` solo si la task necesita
+inspeccionar la salida. El timeout del step se aplica a la task completa.
 
 Regla de diseño:
 
-- `ExecutionContext` debe seguir siendo generico.
+- `TaskContext` expone solo el workspace y los recursos compartidos de ejecucion.
 - No se deben anadir helpers especificos como `run_vitis_hls()` o `load_dataset()`.
 - Esos detalles pertenecen a tasks, composers o configs de dominio.
 
-## 6. Extender Steps De Evaluacion
+## 6. Configurar Steps De Evaluacion
 
 Clase base:
 
@@ -728,73 +723,75 @@ from genio import EvaluationStep
 Contrato:
 
 ```python
-class EvaluationStep(ABC):
+@dataclass(frozen=True, slots=True)
+class EvaluationStep:
     id: str
-    depends_on: tuple[str, ...] = ()
-    required_artifacts: Mapping[str, type[Artifact]] = {}
-    produced_artifacts: Mapping[str, type[Artifact]] = {}
-    task_type: type[EvaluationTask] = EvaluationTask
-
-    def create_task(
-        self,
-        individual: Individual,
-        artifacts: Mapping[str, Artifact],
-    ) -> EvaluationTask:
-        ...
+    task_class: type[EvaluationTask]
+    config: Mapping[str, Any] = field(default_factory=dict)
+    timeout_seconds: float | None = None
 ```
 
 Responsabilidades:
 
 - Declarar el id logico del paso.
-- Declarar dependencias con `depends_on`.
-- Declarar artefactos consumidos con claves cualificadas en `required_artifacts`.
-- Declarar todos los artefactos que una task exitosa puede devolver mediante
-  nombres locales en `produced_artifacts`.
-- Declarar el tipo de task que produce mediante `task_type`.
-- Crear una task concreta para un individuo.
-- Usar artefactos acumulados de pasos anteriores si el step depende de ellos.
+- Asociar `task_class` y sus parametros de constructor en `config` (excepto los
+  campos inyectados `individual`, `step_id` y `artifacts`).
+- Derivar `required_artifacts` de `requires`; el workflow ordena automaticamente
+  los steps productores por su id antes de los consumidores.
+- Crear una task concreta con `individual`, `step_id`, `artifacts` y `config`.
 
 Ejemplo:
 
 ```python
-from genio import EvaluationStep, Individual
+from genio import EvaluationStep
 
-class FunctionalStep(EvaluationStep):
-    id = "functional"
-    task_type = FunctionalEvaluationTask
-    produced_artifacts = {"metrics": FunctionalMetricsArtifact}
-
-    def create_task(self, individual: Individual, artifacts):
-        return FunctionalEvaluationTask(individual=individual, step_id=self.id)
+functional_step = EvaluationStep(
+    id="functional",
+    task_class=FunctionalEvaluationTask,
+    config={},
+)
 ```
 
 Ejemplo con dependencia:
 
 ```python
-class HlsStep(EvaluationStep):
-    id = "hls"
-    depends_on = ("compose",)
-    task_type = HlsEvaluationTask
-    required_artifacts = {"compose.project": ProjectArtifact}
-    produced_artifacts = {"rtl": RTLArtifact}
+from dataclasses import dataclass
+from typing import ClassVar
+from genio import ArtifactInput, EvaluationOutput, EvaluationTask
 
-    def create_task(self, individual, artifacts):
-        project = artifacts["compose.project"]
-        return HlsEvaluationTask(
-            individual=individual,
-            step_id=self.id,
-            metadata={"project_path": str(project.load()[0])},
-        )
+@dataclass(frozen=True, slots=True)
+class HlsEvaluationTask(EvaluationTask):
+    requires: ClassVar[tuple[ArtifactInput, ...]] = (
+        ArtifactInput("compose.project", ProjectArtifact),
+    )
+    hls_tool: str = "v++"
+
+    def run(self, context):
+        project = self.artifacts["compose.project"]
+        # Ejecutar self.hls_tool sobre project.files dentro de context.workspace.
+        rtl = RTLArtifact(data={"tool": self.hls_tool}, files={})
+        return EvaluationOutput(artifacts={"rtl": rtl})
+
+hls_step = EvaluationStep(
+    id="hls",
+    task_class=HlsEvaluationTask,
+    config={"hls_tool": "v++"},
+    timeout_seconds=1800,
+)
 ```
 
 Reglas:
 
-- `create_task(...)` debe devolver una instancia de `task_type`.
+- `create_task(...)` pasa solo los artefactos requeridos (mapa con claves cualificadas)
+  al constructor tipado de la task, junto con individuo, id del step y configuracion.
+- `checkpoint_signature()` incluye id, clase de task, config, timeout y requisitos
+  de entrada; el workflow firma los steps en orden efectivo.
 - `id` debe ser unico dentro del workflow.
-- `depends_on` debe referenciar steps existentes.
-- Los nombres de `produced_artifacts` son locales, no vacios y no contienen `.`.
-- Cada requisito debe estar declarado por su productor y su tipo debe ser compatible.
-- Una task exitosa no puede devolver artifacts no declarados o de otro individuo.
+- El id productor de cada artefacto requerido debe corresponder a otro step del workflow.
+- Los nombres devueltos en `EvaluationOutput.artifacts` son locales, no vacios y no contienen `.`.
+- El workflow comprueba la existencia del step productor y los ciclos, no si este
+  declara el nombre o tipo de salida; el executor valida presencia y tipo al consumirla.
+- Cada archivo referenciado debe existir dentro del workspace de la task productora.
 
 ## 7. Declarar Workflows De Evaluacion
 
@@ -808,19 +805,24 @@ Uso:
 
 ```python
 workflow = EvaluationWorkflow((
-    ComposeStep(),
-    FunctionalStep(),
-    HlsStep(),
+    compose_step,
+    functional_step,
+    hls_step,
 ))
 ```
 
 `EvaluationWorkflow` valida:
 
 - ids duplicados;
-- dependencias inexistentes;
-- ciclos.
+- requisitos cuyo id de step productor no existe o con dependencias circulares;
+- claves de requisitos invalidas o tipos de entrada que no son `Artifact`.
 
-El orden de ejecucion se obtiene con:
+Si un productor termina con exito pero omite un artefacto requerido, o entrega un
+tipo incorrecto, el executor lanza `EvaluationExecutionError` y aborta toda la
+sesion de optimizacion. Si la ejecucion de la task productora falla, solo falla
+ese individuo y los demas pueden continuar.
+
+El orden de ejecucion se obtiene con `execution_order()`; solo difiere del orden declarado cuando un step necesita un artefacto de otro situado mas tarde:
 
 ```python
 workflow.execution_order()
@@ -838,89 +840,51 @@ Las metricas se acumulan con claves:
 step_id.metric_name
 ```
 
-## 8. Extender Backends
+## 8. Ejecucion Local Supervisada
 
-Clase base:
+`OptimizationSession` ejecuta las tasks en procesos locales supervisados, incluso
+con `max_workers=1`. `max_workers` controla la concurrencia; `work_dir` es la raiz
+de los workspaces y `execution_metadata` transporta recursos como rutas de Vitis.
+Cada task solo implementa `run(context: TaskContext) -> EvaluationOutput`.
 
-```python
-from genio import Backend, EvaluationHandle, EvaluationState
-```
+Los logs se guardan bajo `work_dir/logs/<run_id>/<individual>/<step>`, por separado
+del workspace `work_dir/workspaces/<individual>/<step>`. El supervisor captura
+stdout/stderr del proceso Python en `stdout.log` y `stderr.log`. Los subprocesos
+heredan esos descriptores y el grupo supervisado salvo que la task capture su
+salida deliberadamente. Las tasks integradas escriben archivos especificos en
+`workspace/logs`; al limpiar el workspace tras un batch completado, se copian a
+`work_dir/logs/<run_id>/<individual>/<step>/task`.
+Un `EvaluationStep` puede declarar `timeout_seconds=None` (sin limite) o un
+timeout positivo para cada task. El supervisor controla la finalizacion y la
+cancelacion de procesos. No existe API de extensiones para backends o handles;
+el soporte SSH ha sido eliminado.
 
-Contrato:
+Las clases de tasks deben poder importarse desde su modulo y sus campos deben
+admitir serializacion con `pickle`: el executor valida esto antes de lanzarlas.
+Abrir conexiones o crear locks dentro de `run()` evita transportarlos al worker;
+`TaskContext` se crea alli y no forma parte de los datos serializados.
 
-```python
-class Backend(ABC):
-    def submit(self, task: EvaluationTask) -> EvaluationHandle:
-        ...
+### Cache De Evaluaciones
 
-    def submit_batch(self, tasks: Sequence[EvaluationTask]) -> list[EvaluationHandle]:
-        ...
+La `EvaluationCache` pertenece a `OptimizationSession`, no a las extensiones:
+almacena salidas exitosas por step durante esa sesion. Se configura con
+`cache_capacity={"functional": 100, "hls": 20, "simulation": None}`, usando IDs
+de steps como claves. Un step omitido o con `0` no usa cache, un valor positivo
+limita sus entradas mediante LRU y `None` no limita su numero. La cache comienza
+vacia al iniciar o reanudar y se elimina al terminar `run()`; no forma parte de
+los checkpoints. El executor agrupa evaluaciones equivalentes dentro de cada ola,
+ademas de reutilizar entradas de olas anteriores de la misma sesion.
 
-    def collect(self, handle: EvaluationHandle) -> list[Artifact]:
-        ...
-
-    def status(self, handle: EvaluationHandle) -> EvaluationState:
-        ...
-
-    def error(self, handle: EvaluationHandle) -> str | None:
-        return None
-
-    def cancel(self, handle: EvaluationHandle) -> None:
-        ...
-```
-
-Responsabilidades:
-
-- Recibir `EvaluationTask`.
-- Crear contexto de ejecucion.
-- Ejecutar o enviar la task.
-- Devolver `EvaluationHandle`.
-- Permitir recoger artefactos.
-- Exponer estado, error y cancelacion.
-
-No debe:
-
-- Saber que es Vitis, OpenCV, Git, un dataset o una plantilla.
-- Crear tasks.
-- Interpretar metricas.
-- Decidir objetivos de optimizacion.
-
-### `EvaluationHandle`
-
-Campos:
-
-```python
-id: str
-task_id: str | None
-backend_id: str | None
-metadata: Mapping[str, Any]
-payload: Any
-```
-
-### `EvaluationState`
-
-Estados:
-
-```python
-PENDING
-RUNNING
-DONE
-FAILED
-CANCELLED
-```
-
-### Cuándo Crear Un Backend Nuevo
-
-Crear un backend nuevo si se necesita:
-
-- ejecucion remota;
-- colas de trabajos;
-- paralelismo real;
-- integracion con Slurm, Kubernetes, Ray, Celery u otro scheduler;
-- persistencia externa de artefactos;
-- cancelacion asincrona.
-
-Para ejecucion local sincrona ya existe `LocalBackend`.
+Una task cacheable debe producir la misma salida para los dominios declarados y los
+artefactos de entrada equivalentes; se presupone que recursos externos como datasets,
+toolchains y templates son inmutables durante la sesion. Los archivos declarados en
+`Artifact.files` se copian al almacenamiento de cache y se restauran como copias
+separadas dentro del workspace de cada individuo, sin reutilizar paths del
+productor. Los archivos no declarados no forman parte de las salidas cacheadas;
+`Artifact.data` no debe guardar rutas a archivos generados porque no se reubican.
+Esas rutas deben estar en `Artifact.files`. Un acierto no ejecuta la task y por
+tanto tampoco genera nuevos logs de esa task.
+`keep_all_individuals=True` sigue siendo necesario para retener workspaces completos.
 
 ## 9. Extender Composers
 
@@ -953,7 +917,7 @@ Responsabilidades:
 - Traducir un `Individual` a una representacion de dominio.
 - Reutilizar definiciones de stages.
 - Saltar etapas `nop` si aplica.
-- Consumir solo los dominios de `individual.design` que correspondan a su backend, por ejemplo `hls` para síntesis o `system` para integración de plataforma.
+- Consumir solo los dominios de `individual.values` que correspondan a su backend, por ejemplo `hls` para síntesis o `system` para integración de plataforma. Los consumidores actuales deben migrar a esta representación.
 - Preparar informacion que una task puede materializar.
 
 No debe:
@@ -981,13 +945,23 @@ class PipelineComposer(Composer):
 Uso recomendado dentro de una task:
 
 ```python
+import json
+
 class ComposeTask(EvaluationTask):
-    def run(self, context):
-        composer = PipelineComposer("search_space/stages/definitions")
+    def run(self, context: TaskContext) -> EvaluationOutput:
+        composer = PipelineComposer(context.resources["stages_definitions_path"])
         pipeline = composer.compose(self.individual)
-        path = context.write_json(context.artifact_path(self, "pipeline.json"), pipeline)
-        return [PipelineArtifact("pipeline", path, self.individual.id)]
+        path = context.workspace / "pipeline.json"
+        path.write_text(json.dumps(pipeline, indent=2), encoding="utf-8")
+        return EvaluationOutput(artifacts={
+            "pipeline": Artifact(data={"format": "json"}, files={"pipeline": path}),
+        })
 ```
+
+El consumidor recibe este artefacto con la clave cualificada `compose.pipeline`.
+El llamador inyecta `stages_definitions_path` en `execution_metadata`, por ejemplo
+`Path.cwd().resolve() / "search_space/stages/definitions"` al ejecutarse desde la
+raiz del checkout; en otras ubicaciones debe indicar su ruta absoluta.
 
 ## 10. Extender Estadisticas
 
@@ -1218,7 +1192,7 @@ Los JSON se reemplazan atomicamente y rechazan `NaN`/`Infinity`.
 
 ## 11. Montar Una Sesion Completa
 
-Una sesion conecta espacio de busqueda, algoritmo, backend, workflow y la configuracion
+Una sesion conecta espacio de busqueda, algoritmo, workflow y la configuracion
 objetiva opcional. Este ejemplo usa bounds fijos y scalarizer explicito para mantener
 scores comparables durante varias generaciones:
 
@@ -1271,7 +1245,8 @@ genetic_result = OptimizationSession(
         max_generations=12,
         random=Random(7),
     ),
-    backend=genetic_backend,
+    max_workers=4,
+    work_dir=Path("tmp/genetic-work"),
     evaluation_workflow=workflow,
     objective_set=objective_set,
 ).run()
@@ -1283,7 +1258,8 @@ nsga2_result = OptimizationSession(
         max_generations=12,
         seed=7,
     ),
-    backend=nsga2_backend,
+    max_workers=4,
+    work_dir=Path("tmp/nsga2-work"),
     evaluation_workflow=workflow,
     objective_set=objective_set,
 ).run()
@@ -1300,10 +1276,10 @@ de `pymoo` en sus respectivos `best_individuals`.
 
 ### Necesito Una Nueva Metrica
 
-Implementar o modificar una `EvaluationTask` para devolver un `MetricArtifact`.
+Implementar o modificar una `EvaluationTask` para devolver la nueva metrica en `EvaluationOutput.metrics`.
 
 ```text
-EvaluationTask.run -> MetricArtifact.metrics -> Result.metrics
+EvaluationTask.run -> EvaluationOutput.metrics -> Result.metrics
 ```
 
 ### Necesito Un Nuevo Criterio De Optimizacion
@@ -1320,18 +1296,20 @@ Crear una subclase de `SearchAlgorithm`, validar sus necesidades en `configure(c
 
 ### Necesito Un Nuevo Paso De Evaluacion
 
-Crear una subclase de `EvaluationStep` y una subclase de `EvaluationTask` asociada.
+Crear una subclase de `EvaluationTask` con `requires` si consume artefactos y
+devolver salidas nombradas en `EvaluationOutput.artifacts`; configurar una instancia
+generica de `EvaluationStep` con su clase y parametros.
 
 ```text
 EvaluationStep.create_task -> EvaluationTask.run
 ```
 
-El framework incluye como referencia un workflow de tres fases:
+Las extensiones instalables incluyen como referencia un workflow de tres fases:
 
 ```text
-PythonImageFunctionalEvaluationStep
-    -> HLSImagePipelineSynthesisEvaluationStep
-    -> XHeepVerilatorSimulationEvaluationStep
+EvaluationStep(task_class=PythonImageFunctionalTask)
+    -> EvaluationStep(task_class=HLSImagePipelineSynthesisTask)
+    -> EvaluationStep(task_class=XHeepVerilatorSimulationTask)
 ```
 
 El último step demuestra cómo consumir un artefacto RTL, materializar un checkout
@@ -1341,9 +1319,10 @@ líneas `GENIO_METRIC:nombre:valor` en métricas. Véase
 El compositor selecciona exclusivamente mediante `application_name` los flujos
 `genio_trans_mem_mem`, `genio_trans_mem_flash` o `genio_trans_flash_mem`.
 
-### Necesito Un Nuevo Backend
+### Necesito Mas Paralelismo
 
-Crear una subclase de `Backend` si la ejecucion no cabe en `LocalBackend`.
+Configurar `max_workers` en `OptimizationSession`. La ejecucion remota por SSH
+ya no esta soportada.
 
 ### Necesito Generar Codigo O Configuracion
 
@@ -1358,14 +1337,14 @@ Crear una subclase de `StatisticsCollector`.
 - Los objetivos proceden siempre de `Result.metrics`, pero el algoritmo los recibe ya transformados en `EvaluatedBatch`.
 - Los nombres de metricas agregadas siguen la forma `step_id.metric_name`.
 - Los nombres de artefactos acumulados siguen la forma `step_id.artifact_name`.
-- Los artefactos no metricos no se devuelven en `Result`.
+- Los artefactos no se devuelven en `Result`.
 - `ObjectiveSet` es opcional en `OptimizationSession`; sus estrategias tienen defaults `None`.
 - Los algoritmos declaran sus requisitos mediante `SearchContext` y deciden su propio `best_individuals()`.
 - `ObjectiveSet` no almacena historia ni selecciona resultados globales.
 - La ponderacion de objetivos pertenece a `WeightedMeanScalarizer`.
 - Para comparar scores entre generaciones se necesita una escala estable, normalmente `MinMaxNormalizer(FIXED)` con bounds completos.
 - `batch_index` en `Evaluation.metadata` permite reconstruir poblaciones o generaciones evaluadas.
-- El backend no debe contener logica de dominio.
+- La infraestructura de procesos no debe contener logica de dominio.
 - Las tasks son el lugar correcto para ejecutar herramientas, materializar archivos y producir artefactos.
 
 ### Checkpoints De Extensiones
@@ -1374,14 +1353,15 @@ Toda extension que participe en la firma de una sesion debe declarar de forma
 determinista y serializable como JSON la configuracion que afecta a su comportamiento:
 
 - `Objective`, `Normalizer` y `Scalarizer` deben implementar siempre `checkpoint_signature()`; sus bases rechazan la firma implicita.
-- `SearchAlgorithm`, `StatisticsCollector`, `EvaluationStep`, `Composer` y `Backend` deben incluir todos sus parametros relevantes en `checkpoint_signature()`.
+- `SearchAlgorithm`, `StatisticsCollector` y `Composer` deben incluir todos sus parametros relevantes en `checkpoint_signature()`.
+- `EvaluationStep` firma id, clase de task, config, timeout y requisitos de entrada; `EvaluationWorkflow` firma el orden efectivo.
 - La configuracion de una `EvaluationTask` queda cubierta por el `EvaluationStep` que la construye.
 - Un algoritmo con `supports_checkpointing=True` implementa `checkpoint_state()` y `restore_checkpoint_state(state, *, search_space, evaluated_batches)`.
 - Un normalizer con estado implementa `NormalizationState.checkpoint_state()` y `restore_state(data)`.
 - El estado mutable no debe duplicar la historia: los `EvaluatedBatch` de la sesion son la fuente autoritativa para restaurar algoritmos.
 - `OptimizationSession` es el unico lector y escritor del formato de checkpoint; no existen schemas versionados ni formatos por algoritmo.
 
-Cambiar una metrica, bound, peso, template, dataset, backend o parametro algorítmico
+Cambiar una metrica, bound, peso, template, dataset, configuracion de ejecucion o parametro algorítmico
 debe cambiar la firma y hacer incompatible la reanudacion.
 
 ## 14. Mapa Rapido De Clases Abstractas
@@ -1392,22 +1372,21 @@ debe cambiar la firma y hacer incompatible la reanudacion.
 | `Objective` | Nuevos criterios escalares o compuestos | `value`, `checkpoint_signature` |
 | `Normalizer` | Nuevas transformaciones vectoriales con estado propio | `validate`, `fit`, `transform`, `restore_state` |
 | `Scalarizer` | Nuevas agregaciones a score | `validate`, `scalarize` |
-| `Artifact` | Nuevas salidas consumibles por steps | `load` |
-| `MetricArtifact` | Nuevas salidas metricas | `metrics` |
+| `Artifact[T]` | Datos estructurados pequenos y archivos para steps posteriores | campos `data`, `files` |
+| `EvaluationOutput` | Metricas y artefactos separados de cada task | campos `metrics`, `artifacts` |
 | `EvaluationTask` | Nuevas unidades ejecutables | `run` |
-| `EvaluationStep` | Nuevos pasos de workflow | `create_task` |
-| `Backend` | Nuevos mecanismos de ejecucion | `submit`, `collect`, `status` |
+| `EvaluationStep` | Configurar tareas en el workflow | `task_class`, `config`, `timeout_seconds` |
 | `Composer` | Nuevas traducciones de individuos | `compose` |
 | `StatisticsCollector` | Nuevos recolectores de eventos | hooks de sesion |
 
 ## 15. Checklist Para Una Extension De Dominio
 
-1. Definir que artefactos produce cada fase.
-2. Implementar `Artifact` o `MetricArtifact` para esas salidas.
+1. Definir las metricas y, si hacen falta, los artefactos que produce cada fase.
+2. Implementar `Artifact` solo para las salidas consumidas por otros steps.
 3. Implementar una `EvaluationTask` por unidad ejecutable.
-4. Implementar un `EvaluationStep` por paso logico.
-5. Construir un `EvaluationWorkflow` con dependencias explicitas.
-6. Elegir `LocalBackend` o implementar un `Backend` propio.
+4. Configurar un `EvaluationStep` generico por task.
+5. Construir un `EvaluationWorkflow` con dependencias declaradas en `EvaluationTask.requires`.
+6. Configurar `max_workers`, `work_dir` y recursos con `execution_metadata` en la sesion.
 7. Implementar o configurar un `SearchAlgorithm` con `configure`, `ask()` y `tell(batch)`.
 8. Definir `ObjectiveSet` en la sesion si el algoritmo necesita comparar resultados.
 9. Elegir explicitamente normalizer y scalarizer; usar bounds fijos si se comparan generaciones.

@@ -1,82 +1,90 @@
-"""Declarative evaluation-step extension contract."""
+"""Generic declaration and factory for executable evaluation tasks."""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from types import MappingProxyType
-from typing import Any, cast
+from dataclasses import dataclass, field
+from inspect import signature
+from typing import Any
 
-from genio.artifacts import Artifact
+from genio.evaluation.artifact import Artifact
 from genio.core.individual import Individual
-from genio.evaluation.task import EvaluationTask
+from genio.evaluation.task import ArtifactInput, EvaluationTask
 
 
-class EvaluationStep(ABC):
-    """Describe one node in an evaluation workflow.
+@dataclass(frozen=True, slots=True)
+class EvaluationStep:
+    """Configure a task type and its artifact contracts for one workflow step.
 
-    Subclasses expose static dependency information and create an
-    :class:`EvaluationTask` for each individual reaching the step.
-
-    Attributes:
-        id: Workflow-unique identifier without ``.`` characters. It namespaces
-            produced artifacts and metrics.
-        depends_on: IDs of steps that must complete first.
-        required_artifacts: Mapping from qualified ``step_id.artifact_name`` keys
-            to expected artifact classes. Producers must also appear directly in
-            ``depends_on``.
-        produced_artifacts: Mapping from local artifact names to the concrete
-            artifact classes that a successful task may return.
-        task_type: Concrete task class that :meth:`create_task` must return.
+    The task class declares ``requires``. The configuration is checked against
+    its constructor once; only the resulting task travels to the worker process
+    for each individual. Outputs are validated when produced and consumed.
     """
 
     id: str
-    depends_on: tuple[str, ...] = ()
-    required_artifacts: Mapping[str, type[Artifact]] = MappingProxyType({})
-    produced_artifacts: Mapping[str, type[Artifact]] = MappingProxyType({})
-    task_type: type[EvaluationTask] = cast(type[EvaluationTask], EvaluationTask)
+    task_class: type[EvaluationTask]
+    config: Mapping[str, Any] = field(default_factory=dict)
+    timeout_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task_class, type) or not issubclass(
+            self.task_class, EvaluationTask
+        ):
+            raise TypeError("task_class must be an EvaluationTask subclass.")
+        if not isinstance(self.config, Mapping) or any(
+            not isinstance(key, str) for key in self.config
+        ):
+            raise TypeError("Step config must map field names to values.")
+        if {"individual", "artifacts", "step_id"} & self.config.keys():
+            raise ValueError("Step config cannot override injected task fields.")
+        declarations = self.task_class.requires
+        if not isinstance(declarations, (tuple, list)) or any(
+            not isinstance(item, ArtifactInput) for item in declarations
+        ):
+            raise TypeError("Task ArtifactInput declarations must be a list or tuple.")
+        sources = [item.source for item in declarations]
+        if any(not isinstance(source, str) for source in sources):
+            raise TypeError("Task artifact sources must be strings.")
+        if len(sources) != len(set(sources)):
+            raise ValueError("Task declares duplicate artifact sources.")
+        try:
+            signature(self.task_class).bind(
+                individual=None,
+                artifacts={},
+                step_id=self.id,
+                **dict(self.config),
+            )
+        except TypeError as exc:
+            raise ValueError(
+                f"Invalid configuration for task {self.task_class.__name__}: {exc}"
+            ) from exc
+
+    @property
+    def required_artifacts(self) -> Mapping[str, type[Artifact]]:
+        """Return the task's qualified input declarations."""
+        return {
+            item.source: item.artifact_type for item in self.task_class.requires
+        }
 
     def checkpoint_signature(self) -> Mapping[str, Any]:
-        """Return structural workflow configuration for checkpoint validation.
-
-        Concrete steps with additional behavior-affecting configuration should
-        extend this mapping. A session refuses checkpointing when the base
-        implementation has not been overridden.
-        """
-
-        signature: dict[str, Any] = {
+        """Describe the task implementation, configuration and artifact contracts."""
+        return {
             "id": self.id,
-            "depends_on": list(self.depends_on),
-            "step_type": f"{type(self).__module__}.{type(self).__qualname__}",
-            "task_type": f"{self.task_type.__module__}.{self.task_type.__qualname__}",
+            "task_class": self.task_class,
+            "timeout_seconds": self.timeout_seconds,
+            "config": dict(self.config),
+            "requires": self.required_artifacts,
         }
-        if self.required_artifacts:
-            signature["required_artifacts"] = {
-                key: f"{artifact_type.__module__}.{artifact_type.__qualname__}"
-                for key, artifact_type in sorted(self.required_artifacts.items())
-            }
-        if self.produced_artifacts:
-            signature["produced_artifacts"] = {
-                key: f"{artifact_type.__module__}.{artifact_type.__qualname__}"
-                for key, artifact_type in sorted(self.produced_artifacts.items())
-            }
-        return signature
 
-    @abstractmethod
     def create_task(
         self,
         individual: Individual,
         artifacts: Mapping[str, Artifact],
     ) -> EvaluationTask:
-        """Create an executable task for one individual.
-
-        Args:
-            individual: Candidate being evaluated by this step.
-            artifacts: Only the qualified artifacts declared by
-                ``required_artifacts`` after executor type validation.
-
-        Returns:
-            An instance of the class declared by ``task_type``.
-        """
-
-        raise NotImplementedError
+        """Inject the individual and its resolved inputs into a new task."""
+        return self.task_class(
+            individual=individual,
+            artifacts=artifacts,
+            step_id=self.id,
+            **dict(self.config),
+        )

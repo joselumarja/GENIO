@@ -35,10 +35,11 @@ class Individual:
         id: Identity of this materialized candidate. Equivalent genotypes may
             have different identifiers when proposed more than once.
         scenario: Identifier of the search scenario that owns the candidate.
-        slots: Stage choices in pipeline order.
+        values: Concrete selections by domain. ``pipeline``, when present, is an
+            ordered tuple of :class:`StageChoice`; other domains map parameter
+            names to their selected values.
         genotype: Mixed-radix genes used to construct the candidate, when known.
         search_index: Stable mixed-radix index within the scenario, when known.
-        design: Values from non-pipeline design domains such as hardware options.
         metadata: Provenance supplied by algorithms or application code.
 
     Note:
@@ -48,48 +49,7 @@ class Individual:
 
     id: str
     scenario: str
-    slots: tuple[StageChoice, ...]
+    values: dict[str, Any] = field(default_factory=dict)
     genotype: tuple[int, ...] | None = None
     search_index: int | None = None
-    design: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_slots(
-        cls,
-        id: str,
-        scenario: str,
-        slots: list[StageChoice] | tuple[StageChoice, ...],
-        genotype: tuple[int, ...] | None = None,
-        search_index: int | None = None,
-        design: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> "Individual":
-        """Create an individual from an ordered collection of stage choices.
-
-        This convenience constructor normalizes ``slots`` to a tuple and copies
-        missing ``design`` and ``metadata`` values to empty mappings. It does not
-        validate the candidate against a :class:`genio.SearchSpace`; use the
-        search-space factory methods when validation and index calculation are
-        required.
-
-        Returns:
-            A materialized individual containing the supplied configuration.
-        """
-        return cls(
-            id=id,
-            scenario=scenario,
-            slots=tuple(slots),
-            genotype=genotype,
-            search_index=search_index,
-            design=design or {},
-            metadata=metadata or {},
-        )
-
-    def stage_sequence(self) -> tuple[str, ...]:
-        """Return the selected stage names in slot order."""
-        return tuple(choice.stage for choice in self.slots)
-
-    def parameters_by_slot(self) -> dict[int, dict[str, Any]]:
-        """Return the selected parameters keyed by slot index."""
-        return {choice.slot: choice.parameters for choice in self.slots}

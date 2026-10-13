@@ -24,7 +24,7 @@ El host de ejecución debe proporcionar:
 - El toolchain RISC-V y FuseSoC disponibles dentro de ese entorno.
 - Vitis y Vitis Libraries para el step HLS anterior.
 
-El ejemplo `tests/run_insect_random_search.py` usa:
+El ejemplo `use_cases/insect_segmentation/run_random_search.py` (ejecutable desde la raiz con `python -m use_cases.insect_segmentation.run_random_search`) usa:
 
 ```python
 GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
@@ -41,21 +41,38 @@ El entorno y el ejecutable pueden cambiarse con `conda_environment` y `conda_too
 ## Configuración Del Workflow
 
 ```python
-xheep_step = XHeepVerilatorSimulationEvaluationStep(
-    depends_on=(hls_step.id,),
-    composer=GRHeepConfigurationComposer(
-        ROOT / "search_space/stages/definitions",
-        templates_path=ROOT / "gr_heep_templates",
-        application_name="genio_trans_flash_mem",
-    ),
-    gr_heep_path=Path("/home/joselu/Universidad/Doctorado/GEN-HEEP"),
-    metadata={"execution": {"timeout_seconds": 1800}},
+from pathlib import Path
+from genio import EvaluationStep
+from genio_use_cases.xheep import GRHeepConfigurationComposer, XHeepVerilatorSimulationTask
+
+# Ejecutar desde la raiz del checkout; en otro directorio, indicar su ruta absoluta.
+REPO_ROOT = Path.cwd().resolve()
+STAGES = REPO_ROOT / "search_space/stages/definitions"
+
+xheep_step = EvaluationStep(
+    id="xheep_verilator_simulation",
+    task_class=XHeepVerilatorSimulationTask,
+    config={
+        "composer": GRHeepConfigurationComposer(
+            STAGES,
+            templates_path=REPO_ROOT / "gr_heep_templates",
+            application_name="genio_trans_flash_mem",
+        ),
+        "gr_heep_path": Path("/home/joselu/Universidad/Doctorado/GEN-HEEP"),
+    },
+    timeout_seconds=1800,
 )
 ```
 
-El step requiere un `HLSRTLArtifact` con `metadata["interface"] == "safa_fifo"`.
-El nombre del módulo superior y las dimensiones de entrada/salida se obtienen del
-artefacto HLS.
+El step consume el `HLSRTLArtifact` publicado como
+`hls_image_pipeline_synthesis.rtl_hls_synthesis`, con
+`artifact.data["interface"] == "safa_fifo"`. Es una subclase marcador de
+`Artifact[Mapping[str, Any]]`: `data` incluye `origin`, `top_function`, `interface`
+y los metadatos de imagen (`input_type`, `output_type`, dimensiones, NPC,
+`input_words`, `output_words` y `bus_width` cuando estan disponibles). `files`
+asocia claves logicas `verilog/<path>` o `vhdl/<path>` a los archivos RTL
+existentes dentro del workspace de la task HLS. X-HEEP usa estos datos para
+configurar la integracion y los archivos para instalar el RTL en el overlay.
 
 El nombre de la aplicación se configura exclusivamente mediante
 `GRHeepConfigurationComposer.application_name`. El step y la tarea de simulación lo
@@ -84,16 +101,23 @@ Para seleccionar otro flujo solo cambia el compositor:
 
 ```python
 composer = GRHeepConfigurationComposer(
-    ROOT / "search_space/stages/definitions",
-    templates_path=ROOT / "gr_heep_templates",
+    STAGES,
+    templates_path=REPO_ROOT / "gr_heep_templates",
     application_name="genio_trans_mem_flash",
     application_defaults={"FLASH_OUTPUT_OFFSET": "0x00900000"},
 )
 ```
 
+Las plantillas GR-HEEP están en `gr_heep_templates` en la raíz del checkout;
+el catálogo de stages está en `search_space/stages` y los recursos HLS en
+`hls_templates` y `hls_implementations`. El paquete instalado solo contiene
+código: el llamador debe proporcionar estos directorios de recursos.
+Instalar `pip install -e '.[image_pipeline,xheep]'` para las dependencias
+opcionales Python; Vitis y el checkout GR-HEEP se proporcionan por separado.
+
 `application_defaults` debe contener un offset de salida solo para la variante que
 escribe flash. No se configura un segundo nombre de aplicacion en
-`XHeepVerilatorSimulationEvaluationStep` ni en `XHeepVerilatorSimulationTask`.
+`EvaluationStep.config` como parametro adicional ni en `XHeepVerilatorSimulationTask`.
 
 La secuencia predeterminada es:
 
@@ -127,7 +151,7 @@ en el build vendorizado y los targets de simulación lo consumen mediante `sw/bu
 - `main.h` con la imagen de entrada embebida.
 
 Si se proporciona `input_image_path`, el composer selecciona el modo OpenCV desde
-`artifact.metadata["input_type"]`: `XF_8UC1` carga grayscale y `XF_8UC3` carga BGR.
+`artifact.data["input_type"]`: `XF_8UC1` carga grayscale y `XF_8UC3` carga BGR.
 Después redimensiona y empaqueta los bytes en palabras little-endian de 32 bits,
 validando canales, tipo `uint8` y `input_words`. Sin imagen se utiliza un patrón
 sintético determinista; otros tipos XF se rechazan explícitamente.
@@ -217,9 +241,10 @@ GENIO_METRIC:safa_input_stall_cycles:120
 GENIO_STATUS:0
 ```
 
-El evaluador convierte `GENIO_METRIC:nombre:valor` y `GENIO_PERF` en métricas del
-artefacto `XHeepSimulationArtifact`. Al agregarse al resultado aparecen bajo el prefijo
-del step:
+La task convierte `GENIO_METRIC:nombre:valor` y `GENIO_PERF` en metricas locales
+`xheep_verilator.*` dentro de `EvaluationOutput.metrics`; devuelve
+`artifacts={}`. El executor antepone el id del step al agregarlas en
+`Result.metrics`:
 
 ```text
 xheep_verilator_simulation.xheep_verilator.safa_active_cycles
@@ -228,6 +253,10 @@ xheep_verilator_simulation.xheep_verilator.application_cycles
 
 La simulación se considera fallida si falta `GENIO_STATUS`, si su valor no es cero o
 si X-HEEP informa un `Program Finished with value` distinto de cero.
+Los logs y `xheep_simulation.json` se escriben en el workspace, pero no se devuelven
+como artefactos del workflow. Al limpiar el workspace tras un batch completado,
+solo se retienen los archivos de `workspace/logs`; conservar los JSON requiere
+`keep_all_individuals=True` o copiarlos fuera del workspace por separado.
 
 ## Uso Como Objetivos
 
@@ -271,11 +300,16 @@ su propia semantica de `best_individuals()` y `ObjectiveSet` no analiza el histo
 
 ## Diagnóstico
 
-Cada comando conserva stdout y stderr en:
+La task guarda stdout y stderr de cada comando en:
 
 ```text
-<base_work_dir>/<individual>/xheep_verilator_simulation/logs/
+<work_dir>/workspaces/<individual>/xheep_verilator_simulation/logs/
 ```
+
+Al limpiar el workspace tras un batch completado, esos archivos se copian a
+`<work_dir>/logs/<run_id>/<individual>/xheep_verilator_simulation/task/`.
+El supervisor conserva aparte `stdout.log` y `stderr.log` del proceso Python en
+`<work_dir>/logs/<run_id>/<individual>/xheep_verilator_simulation/`.
 
 También se generan:
 

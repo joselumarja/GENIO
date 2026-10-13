@@ -20,7 +20,6 @@ from genio.core.search_result import SearchResult
 from genio.statistics.base import StatisticsCollector
 
 if TYPE_CHECKING:
-    from genio.cache.base import ArtifactCache
     from genio.objective.runtime import EvaluatedBatch
     from genio.session.optimization import OptimizationSession
 
@@ -30,9 +29,8 @@ class CSVStatisticsCollector(StatisticsCollector):
 
     Rows represent proposal occurrences rather than unique individuals or
     genotypes. They are first written with a ``not_evaluated`` state before the
-    backend runs, then atomically rewritten after the completed batch is reported.
-    Dynamic columns flatten pipeline design, algorithm metadata, cache telemetry,
-    and metrics.
+    evaluation runs, then atomically rewritten after the completed batch is reported.
+    Dynamic columns flatten pipeline design, algorithm metadata, and metrics.
     """
 
     SCHEMA_VERSION = 3
@@ -66,8 +64,6 @@ class CSVStatisticsCollector(StatisticsCollector):
         "aggregate_score",
         "normalization_version",
         "partial_metrics",
-        "cache_hit",
-        "cache_json",
         "metrics_json",
         "error_type",
         "error_message",
@@ -103,7 +99,7 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._started_monotonic: float | None = None
         self._completed_batches = 0
         self._completed_evaluations = 0
-        self._artifact_cache: ArtifactCache | None = None
+        self._slot_gene_positions: tuple[int, ...] = ()
 
     def on_session_started(self, session: OptimizationSession) -> None:
         """Initialize output files and write the reproducibility manifest."""
@@ -113,7 +109,7 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._run_id = session.run_id
         self._session_id = session.id
         self._algorithm_name = self._qualified_name(session.algorithm)
-        self._artifact_cache = session.artifact_cache
+        self._slot_gene_positions = session.search_space.slot_gene_positions
         self._started_at = datetime.now(timezone.utc)
         self._started_monotonic = time.perf_counter()
         self._write_manifest(session)
@@ -134,21 +130,20 @@ class CSVStatisticsCollector(StatisticsCollector):
                     if session.objective_set is not None
                     else None
                 ),
-                "backend": self._qualified_name(session.backend),
-                "backend_run_id": getattr(session.backend, "run_id", None),
-                "artifact_cache": (
-                    {
-                        "type": self._qualified_name(session.artifact_cache),
-                        "initial_state": session.artifact_cache.snapshot(),
-                    }
-                    if session.artifact_cache is not None
-                    else None
-                ),
+                "max_workers": session.max_workers,
+                "cache_capacity": dict(session.cache_capacity),
+                "work_dir": str(session.work_dir),
+                "execution_metadata": dict(session.execution_metadata),
                 "workflow_steps": [
                     {
                         "id": step.id,
-                        "type": self._qualified_name(step),
-                        "depends_on": list(step.depends_on),
+                        "type": f"{step.task_class.__module__}.{step.task_class.__qualname__}",
+                        "depends_on": sorted(
+                            {
+                                artifact.partition(".")[0]
+                                for artifact in step.required_artifacts
+                            }
+                        ),
                     }
                     for step in session.evaluation_workflow.execution_order()
                 ],
@@ -188,16 +183,6 @@ class CSVStatisticsCollector(StatisticsCollector):
         result = evaluation.result
         row["evaluation_status"] = result.status.value
         row["partial_metrics"] = bool(result.metrics and result.error)
-        cache_metadata = result.metadata.get("cache", {})
-        if not isinstance(cache_metadata, Mapping):
-            cache_metadata = {}
-        row["cache_hit"] = any(
-            bool(values.get("cache_hit"))
-            for values in cache_metadata.values()
-            if isinstance(values, Mapping)
-        )
-        row["cache_json"] = self._canonical_json(cache_metadata)
-        self._flatten_mapping("cache", cache_metadata, row)
         row["metrics_json"] = self._canonical_json(result.metrics)
         for metric_name, value in sorted(result.metrics.items()):
             row[f"metric.{metric_name}"] = value
@@ -291,11 +276,6 @@ class CSVStatisticsCollector(StatisticsCollector):
                 ],
                 "metric_summary": self._metric_summary(),
                 "objective_summary": self._objective_summary(),
-                "cache": (
-                    self._artifact_cache.snapshot()
-                    if self._artifact_cache is not None
-                    else None
-                ),
             },
         )
 
@@ -310,11 +290,6 @@ class CSVStatisticsCollector(StatisticsCollector):
             "individuals_csv": str(self.individuals_path),
             "run_manifest": str(self.run_manifest_path),
             "run_summary": str(self.run_summary_path),
-            "cache": (
-                self._artifact_cache.snapshot()
-                if self._artifact_cache is not None
-                else None
-            ),
         }
 
     def checkpoint_state(self) -> dict[str, Any]:
@@ -336,7 +311,7 @@ class CSVStatisticsCollector(StatisticsCollector):
             "elapsed_seconds": elapsed_seconds,
             "completed_batches": self._completed_batches,
             "completed_evaluations": self._completed_evaluations,
-            "run_manifest": self._read_json_if_exists(self.run_manifest_path),
+            "run_manifest": self._checkpoint_manifest(),
             "run_summary": self._read_json_if_exists(self.run_summary_path),
         }
 
@@ -377,7 +352,6 @@ class CSVStatisticsCollector(StatisticsCollector):
             elapsed_seconds = float(state.get("elapsed_seconds", 0.0))
             completed_batches = int(state["completed_batches"])
             completed_evaluations = int(state["completed_evaluations"])
-            run_manifest = state.get("run_manifest")
             run_summary = state.get("run_summary")
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Invalid CSV statistics checkpoint state.") from exc
@@ -392,16 +366,13 @@ class CSVStatisticsCollector(StatisticsCollector):
         self._run_id = session.run_id
         self._session_id = session.id
         self._algorithm_name = self._qualified_name(session.algorithm)
+        self._slot_gene_positions = session.search_space.slot_gene_positions
         self._started_at = started_at
         self._started_monotonic = time.perf_counter() - max(0.0, elapsed_seconds)
         self._completed_batches = completed_batches
         self._completed_evaluations = completed_evaluations
-        self._artifact_cache = session.artifact_cache
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        if isinstance(run_manifest, Mapping):
-            self._write_json(self.run_manifest_path, run_manifest)
-        else:
-            self._write_manifest(session)
+        self._write_manifest(session)
         self._write_csv()
         if completed:
             if not isinstance(run_summary, Mapping):
@@ -416,6 +387,12 @@ class CSVStatisticsCollector(StatisticsCollector):
         if not isinstance(algorithm_metadata, Mapping):
             algorithm_metadata = {}
         genotype_json = self._canonical_json(individual.genotype)
+        slots = individual.values.get("pipeline", ())
+        design = {
+            domain: values
+            for domain, values in individual.values.items()
+            if domain != "pipeline"
+        }
         pipeline = [
             {
                 "slot": choice.slot,
@@ -423,12 +400,12 @@ class CSVStatisticsCollector(StatisticsCollector):
                 "parameters": choice.parameters,
                 "wrapper_inputs": choice.wrapper_inputs,
             }
-            for choice in individual.slots
+            for choice in slots
         ]
         pipeline_json = self._canonical_json(pipeline)
-        design_json = self._canonical_json(individual.design)
+        design_json = self._canonical_json(design)
         fingerprint_payload = self._canonical_json(
-            {"pipeline": pipeline, "design": individual.design}
+            {"pipeline": pipeline, "design": design}
         )
         genotype_key = genotype_json if individual.genotype is not None else fingerprint_payload
         duplicate_genotype = genotype_key in self._seen_genotypes
@@ -463,17 +440,15 @@ class CSVStatisticsCollector(StatisticsCollector):
             "aggregate_score": None,
             "normalization_version": None,
             "partial_metrics": False,
-            "cache_hit": False,
-            "cache_json": self._canonical_json({}),
             "metrics_json": self._canonical_json({}),
             "error_type": "",
             "error_message": "",
         }
-        for position, choice in enumerate(individual.slots):
+        for position, choice in enumerate(slots):
             prefix = f"slot.{position:03d}"
             row[f"{prefix}.gene"] = (
-                individual.genotype[position]
-                if individual.genotype is not None and position < len(individual.genotype)
+                individual.genotype[self._slot_gene_positions[position]]
+                if individual.genotype is not None and position < len(self._slot_gene_positions)
                 else None
             )
             row[f"{prefix}.slot"] = choice.slot
@@ -482,7 +457,7 @@ class CSVStatisticsCollector(StatisticsCollector):
             row[f"{prefix}.wrapper_inputs_json"] = self._canonical_json(
                 choice.wrapper_inputs
             )
-        self._flatten_mapping("design", individual.design, row)
+        self._flatten_mapping("design", design, row)
         self._flatten_mapping("algorithm", algorithm_metadata, row)
         return row
 
@@ -631,6 +606,13 @@ class CSVStatisticsCollector(StatisticsCollector):
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
         return dict(value) if isinstance(value, Mapping) else None
+
+    def _checkpoint_manifest(self) -> dict[str, Any] | None:
+        manifest = self._read_json_if_exists(self.run_manifest_path)
+        if manifest is not None:
+            manifest.pop("backend", None)
+            manifest.pop("backend_run_id", None)
+        return manifest
 
     def _fsync_directory(self) -> None:
         descriptor = os.open(self.output_dir, os.O_RDONLY)

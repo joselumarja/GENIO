@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from genio.core.evaluation import Evaluation
-from genio.core.individual import Individual, StageChoice
+from genio.core.individual import Individual
 from genio.core.result import Result, ResultStatus
 from genio.objective.normalization import Normalizer
 from genio.objective.runtime import (
@@ -51,21 +51,13 @@ def _decode_random_state_value(value: object) -> object:
 def encode_individual(individual: Individual) -> dict[str, Any]:
     """Serialize an individual without relying on Python object pickling."""
 
+    if individual.genotype is None or individual.search_index is None:
+        raise ValueError("Checkpoint individuals require a complete genotype and index.")
     return {
         "id": individual.id,
         "scenario": individual.scenario,
-        "slots": [
-            {
-                "slot": choice.slot,
-                "stage": choice.stage,
-                "parameters": choice.parameters,
-                "wrapper_inputs": choice.wrapper_inputs,
-            }
-            for choice in individual.slots
-        ],
-        "genotype": list(individual.genotype) if individual.genotype is not None else None,
+        "genotype": list(individual.genotype),
         "search_index": individual.search_index,
-        "design": individual.design,
         "metadata": individual.metadata,
     }
 
@@ -85,45 +77,21 @@ def decode_individual(value: Mapping[str, Any], search_space: SearchSpace) -> In
             f"Individual scenario {scenario!r} does not match {search_space.scenario_id!r}."
         )
 
-    if genotype_value is not None:
-        if not isinstance(genotype_value, list):
-            raise CheckpointFormatError("Individual genotype must be a list or null.")
+    if not isinstance(genotype_value, list):
+        raise CheckpointFormatError("Individual genotype must be a complete list.")
+    try:
         individual = search_space.from_genotype(
             tuple(genotype_value),
             id=identifier,
             metadata=metadata,
         )
-        if individual.search_index != value.get("search_index"):
-            raise CheckpointFormatError(
-                f"Individual {identifier!r} has an inconsistent search index."
-            )
-        if individual.design != value.get("design", {}):
-            raise CheckpointFormatError(
-                f"Individual {identifier!r} has inconsistent design values."
-            )
-        return individual
-
-    try:
-        slots = tuple(
-            StageChoice(
-                slot=int(choice["slot"]),
-                stage=str(choice["stage"]),
-                parameters=dict(choice.get("parameters", {})),
-                wrapper_inputs=dict(choice.get("wrapper_inputs", {})),
-            )
-            for choice in value["slots"]
+    except (TypeError, ValueError) as exc:
+        raise CheckpointFormatError("Invalid individual genotype.") from exc
+    if individual.search_index != value.get("search_index"):
+        raise CheckpointFormatError(
+            f"Individual {identifier!r} has an inconsistent search index."
         )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise CheckpointFormatError("Invalid individual slot payload.") from exc
-    return Individual.from_slots(
-        id=identifier,
-        scenario=scenario,
-        slots=slots,
-        genotype=None,
-        search_index=value.get("search_index"),
-        design=dict(value.get("design", {})),
-        metadata=metadata,
-    )
+    return individual
 
 
 def encode_evaluation(evaluation: Evaluation) -> dict[str, Any]:

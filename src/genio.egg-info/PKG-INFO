@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: genio
+Version: 0.1.0
+Summary: Framework desacoplado para evaluar candidatos en espacios de busqueda.
+Requires-Python: >=3.10
+Requires-Dist: numpy<2
+Requires-Dist: pymoo<0.7,>=0.6.2
+Provides-Extra: image-pipeline
+Requires-Dist: opencv-python-headless<4.12,>=4.8; extra == "image-pipeline"
+Provides-Extra: xheep
+Requires-Dist: opencv-python-headless<4.12,>=4.8; extra == "xheep"

@@ -100,10 +100,13 @@ class _GenotypeSampling(Sampling):
 
     def _sample_genotype(self, random_state) -> tuple[int, ...]:
         genes: list[int] = []
-        slot_count = len(self.search_space.slot_lengths)
+        slot_indexes = {
+            position: slot_index
+            for slot_index, position in enumerate(self.search_space.slot_gene_positions)
+        }
         for column, length in enumerate(self.search_space.genotype_lengths):
-            if self.balanced and column < slot_count:
-                slot = self.search_space.scenario.slots[column]
+            if self.balanced and column in slot_indexes:
+                slot = self.search_space.scenario.slots[slot_indexes[column]]
                 group = slot.stage_groups[
                     int(random_state.integers(0, len(slot.stage_groups)))
                 ]

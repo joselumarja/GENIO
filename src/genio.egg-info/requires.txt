@@ -1,0 +1,8 @@
+numpy<2
+pymoo<0.7,>=0.6.2
+
+[image_pipeline]
+opencv-python-headless<4.12,>=4.8
+
+[xheep]
+opencv-python-headless<4.12,>=4.8
