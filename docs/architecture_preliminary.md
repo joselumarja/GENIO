@@ -165,6 +165,8 @@ OptimizationSession(
     checkpoint_policy: CheckpointPolicy | None = None,
     objective_set: ObjectiveSet | None = None,
     keep_all_individuals: bool = False,
+    cache_capacity: Mapping[str, int | None] | None = None,
+    show_progress: bool = True,
 )
 ```
 
@@ -184,6 +186,9 @@ Responsabilidades:
 - Asignar identidad unica y orden global a cada propuesta generada.
 - Convertir `Result` en `Evaluation` y anotar metadata de propuesta durante `run()`.
 - Notificar eventos a `StatisticsCollector`.
+- Mostrar en stderr el inicio y resumen de cada batch, incluyendo exitos, fallos,
+  duracion y mejores valores brutos de objetivos cuando existan. Se desactiva con
+  `show_progress=False`.
 - Guardar y restaurar checkpoints consistentes entre batches cuando existe una policy.
 - Construir y devolver `SearchResult`.
 

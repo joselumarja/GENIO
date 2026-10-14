@@ -3,7 +3,6 @@
 import os
 from pathlib import Path
 from random import Random
-import re
 import signal
 import sys
 
@@ -32,23 +31,6 @@ from genio_use_cases.xheep import (  # noqa: E402
     GRHeepConfigurationComposer,
     XHeepVerilatorSimulationTask,
 )
-
-
-def active_vitis_version() -> str:
-    configured = os.environ.get("GENIO_VITIS_VERSION")
-    if configured:
-        return configured
-
-    vitis_root = os.environ.get("XILINX_VITIS")
-    if not vitis_root:
-        raise RuntimeError(
-            "Source the desired Vitis settings or set GENIO_VITIS_VERSION."
-        )
-    path = Path(vitis_root)
-    for candidate in (path.name, path.parent.name):
-        if re.fullmatch(r"20\d{2}\.\d+", candidate):
-            return candidate
-    raise RuntimeError(f"Cannot infer Vitis version from XILINX_VITIS={vitis_root!r}.")
 
 
 IMAGES_PATH = Path("/home/joselu/Universidad/Doctorado/Datasets/Olive_Fly_Grayscale/Images")
@@ -85,16 +67,11 @@ def first_input_image(images_path: Path) -> Path:
     """Return the first deterministic grayscale image used by X-HEEP."""
 
     supported_suffixes = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
-    candidates = tuple(
-        sorted(
-            path
-            for path in images_path.iterdir()
-            if path.is_file() and path.suffix.lower() in supported_suffixes
-        )
+    return next(
+        path
+        for path in sorted(images_path.iterdir())
+        if path.is_file() and path.suffix.lower() in supported_suffixes
     )
-    if not candidates:
-        raise RuntimeError(f"No supported input images found in {images_path}.")
-    return candidates[0]
 
 
 def main() -> None:
@@ -130,7 +107,10 @@ def main() -> None:
             "composer": HLSImagePipelineComposer(
                 DEFINITIONS_PATH,
                 templates_path=HLS_TEMPLATES_PATH,
-                vitis_version=active_vitis_version(),
+                vitis_version=(
+                    os.environ.get("GENIO_VITIS_VERSION")
+                    or Path(os.environ["XILINX_VITIS"]).name
+                ),
                 image_type="XF_8UC1",
                 rows=ROWS,
                 cols=COLS,

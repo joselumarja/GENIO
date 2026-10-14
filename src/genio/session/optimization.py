@@ -6,7 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 import shutil
+import sys
 from tempfile import mkdtemp
+from time import monotonic
 import warnings
 from typing import Any
 from uuid import uuid4
@@ -30,12 +32,13 @@ from genio.checkpoint.codec import (
 from genio.core.evaluation import Evaluation
 from genio.core.individual import Individual
 from genio.core.proposal import Proposal
+from genio.core.result import ResultStatus
 from genio.core.search_result import SearchResult
 from genio.evaluation.executor import EvaluationExecutor
 from genio.evaluation.cache import EvaluationCache
 from genio.evaluation.task import _workspace_segment
 from genio.evaluation.workflow import EvaluationWorkflow
-from genio.objective import ObjectiveSet
+from genio.objective import ObjectiveSet, OptimizationDirection
 from genio.objective.runtime import (
     EvaluatedBatch,
     ObjectiveRuntime,
@@ -72,6 +75,7 @@ class OptimizationSession:
         work_dir: str | Path | None = None,
         execution_metadata: Mapping[str, Any] | None = None,
         cache_capacity: Mapping[str, int | None] | None = None,
+        show_progress: bool = True,
     ) -> None:
         """Configure an optimization session without starting it.
 
@@ -96,6 +100,8 @@ class OptimizationSession:
             execution_metadata: Local resource paths available to tasks.
             cache_capacity: Maximum entries for each step. Omitted or zero
                 disables caching; ``None`` for a named step has no limit.
+            show_progress: Print live batch progress and objective summaries to
+                stderr. Set to ``False`` for quiet or programmatic runs.
 
         Note:
             Checkpoint compatibility is validated when :meth:`run` starts.
@@ -146,6 +152,7 @@ class OptimizationSession:
         self.checkpoint_policy = checkpoint_policy
         self.objective_set = objective_set
         self.keep_all_individuals = keep_all_individuals
+        self.show_progress = show_progress
         self._objective_runtime = (
             objective_set.bind() if objective_set is not None else None
         )
@@ -229,6 +236,14 @@ class OptimizationSession:
         self._prepare_run()
         if self._completed:
             return self._build_result()
+        run_started = monotonic()
+        if self.show_progress:
+            print(
+                f"[genio] run={self.run_id} completed_batches={self._next_batch_index} "
+                f"evaluated={len(self._evaluations)}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             if self._finalized:
                 result = self._build_result()
@@ -254,6 +269,14 @@ class OptimizationSession:
                         break
 
                     batch_index = self._next_batch_index
+                    batch_started = monotonic()
+                    if self.show_progress:
+                        print(
+                            f"[genio] batch={batch_index + 1} started "
+                            f"candidates={len(individuals)}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                     self.statistics.on_batch_started(batch_index, individuals)
                     batch_evaluations = self.evaluate(
                         individuals,
@@ -297,6 +320,14 @@ class OptimizationSession:
                                         )
                                         shutil.copytree(source, retained, dirs_exist_ok=True)
                                 shutil.rmtree(workspace)
+                    if self.show_progress:
+                        self._report_batch_progress(
+                            batch_index,
+                            batch_evaluations,
+                            evaluated_batch,
+                            batch_elapsed=monotonic() - batch_started,
+                            run_elapsed=monotonic() - run_started,
+                        )
                 finally:
                     self._batch_in_progress = False
 
@@ -315,6 +346,71 @@ class OptimizationSession:
         except BaseException:
             self._failed = True
             raise
+
+    def _report_batch_progress(
+        self,
+        batch_index: int,
+        evaluations: Sequence[Evaluation],
+        batch: EvaluatedBatch,
+        *,
+        batch_elapsed: float,
+        run_elapsed: float,
+    ) -> None:
+        """Show committed batch counts, scalar fitness, and raw objective values."""
+        batch_limit = getattr(self.algorithm, "max_generations", None)
+        if isinstance(batch_limit, int):
+            batch_limit -= getattr(self.algorithm, "start_generation", 1) - 1
+        batch_label = (
+            f"{batch_index + 1}/{batch_limit}"
+            if isinstance(batch_limit, int) and batch_limit > 0
+            else str(batch_index + 1)
+        )
+        evaluation_limit = getattr(self.algorithm, "max_evaluations", None)
+        evaluated_label = (
+            f"{len(self._evaluations)}/{evaluation_limit}"
+            if isinstance(evaluation_limit, int) and evaluation_limit > 0
+            else str(len(self._evaluations))
+        )
+        successes = sum(
+            evaluation.result.status is ResultStatus.SUCCESS
+            for evaluation in evaluations
+        )
+        details = [
+            f"evaluated={evaluated_label}",
+            f"success={successes}",
+            f"failed={len(evaluations) - successes}",
+        ]
+        if self.objective_set is not None:
+            valid = batch.valid_items
+            details.append(f"valid_objectives={len(valid)}")
+            scores = (
+                item.objective_values.aggregate_score
+                for item in valid
+                if item.objective_values is not None
+                and item.objective_values.aggregate_score is not None
+            )
+            best_score = max(scores, default=None)
+            if best_score is not None:
+                details.append(f"batch_score={best_score:.4g}")
+            for position, descriptor in enumerate(self.objective_set.schema.objectives):
+                values = [
+                    item.objective_values.raw[position]
+                    for item in valid
+                    if item.objective_values is not None
+                ]
+                if values:
+                    best = (
+                        max(values)
+                        if descriptor.direction is OptimizationDirection.MAXIMIZE
+                        else min(values)
+                    )
+                    details.append(f"best_{descriptor.name}={best:.4g}")
+        details.extend((f"batch_s={batch_elapsed:.1f}", f"elapsed_s={run_elapsed:.1f}"))
+        print(
+            f"[genio] batch={batch_label} completed " + " ".join(details),
+            file=sys.stderr,
+            flush=True,
+        )
 
     def save_checkpoint(self) -> Any:
         """Persist the current completed-batch state immediately.

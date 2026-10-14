@@ -846,6 +846,9 @@ step_id.metric_name
 con `max_workers=1`. `max_workers` controla la concurrencia; `work_dir` es la raiz
 de los workspaces y `execution_metadata` transporta recursos como rutas de Vitis.
 Cada task solo implementa `run(context: TaskContext) -> EvaluationOutput`.
+La sesion muestra por defecto en stderr el comienzo y cierre de cada batch,
+con contadores de resultados, duracion y mejores valores de los objetivos.
+`show_progress=False` desactiva esta salida sin afectar al recolector estadistico.
 
 Los logs se guardan bajo `work_dir/logs/<run_id>/<individual>/<step>`, por separado
 del workspace `work_dir/workspaces/<individual>/<step>`. El supervisor captura

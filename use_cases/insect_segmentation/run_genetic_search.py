@@ -18,7 +18,6 @@ so winners across generations are comparable.
 from __future__ import annotations
 
 import os
-import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -68,35 +67,14 @@ VITIS_LIBRARIES_PATH = Path(os.environ.get("VITIS_LIBRARIES_PATH", ROOT / "Vitis
 OUTPUT_DIR = Path(os.environ.get("GENIO_OUTPUT_DIR", ROOT / "tmp/insect_genetic_search"))
 
 OBJECTIVE_WEIGHTS = {"f1": 0.5, "hardware": 0.5}
-ROWS = 320
-COLS = 240
+ROWS = 3840
+COLS = 2160
 FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 30 * 60
 
 
-def positive_integer(name: str, default: int) -> int:
-    value = int(os.environ.get(name, default))
-    if value <= 0:
-        raise ValueError(f"{name} must be positive.")
-    return value
-
-
-def active_vitis_version() -> str:
-    configured = os.environ.get("GENIO_VITIS_VERSION")
-    if configured:
-        return configured
-    vitis_root = os.environ.get("XILINX_VITIS")
-    if not vitis_root:
-        raise RuntimeError("Source Vitis settings or set GENIO_VITIS_VERSION.")
-    path = Path(vitis_root)
-    for candidate in (path.name, path.parent.name):
-        if re.fullmatch(r"20\d{2}\.\d+", candidate):
-            return candidate
-    raise RuntimeError(f"Cannot infer Vitis version from XILINX_VITIS={vitis_root!r}.")
-
-
 def main() -> None:
-    """Evaluate only pipeline and HLS genes, never unrelated system choices."""
+    """Evaluate pipeline and HLS genes"""
 
     source = SearchSpace(SCENARIO_PATH, DEFINITIONS_PATH).scenario
     scenario = replace(
@@ -105,13 +83,11 @@ def main() -> None:
         domain_order=tuple(domain for domain in source.domain_order if domain != "system"),
     )
     search_space = SearchSpace.from_scenario(scenario)
-    population_size = positive_integer("GENIO_POPULATION_SIZE", 16)
-    if population_size % 2:
-        raise ValueError("GENIO_POPULATION_SIZE must be even.")
+    population_size = int(os.environ.get("GENIO_POPULATION_SIZE", 16))
     scalarizer = WeightedMeanScalarizer(weights=OBJECTIVE_WEIGHTS)
     algorithm = GeneticSearch(
         population_size=population_size,
-        max_generations=positive_integer("GENIO_GENERATIONS", 5),
+        max_generations=int(os.environ.get("GENIO_GENERATIONS", 5)),
         mutation_probability=float(os.environ.get("GENIO_MUTATION_PROBABILITY", "0.05")),
         balanced_initialization=True,
         random=Random(int(os.environ.get("GENIO_SEED", "0"))),
@@ -136,7 +112,10 @@ def main() -> None:
             "composer": HLSImagePipelineComposer(
                 DEFINITIONS_PATH,
                 templates_path=HLS_TEMPLATES_PATH,
-                vitis_version=active_vitis_version(),
+                vitis_version=(
+                    os.environ.get("GENIO_VITIS_VERSION")
+                    or Path(os.environ["XILINX_VITIS"]).name
+                ),
                 image_type="XF_8UC1",
                 rows=ROWS,
                 cols=COLS,
@@ -158,7 +137,7 @@ def main() -> None:
         normalizer=MinMaxNormalizer(scope=NormalizationScope.BATCH),
         scalarizer=scalarizer,
     )
-    result = OptimizationSession(
+    session = OptimizationSession(
         id="insect_genetic_search",
         run_id="insect_genetic_search",
         search_space=search_space,
@@ -166,14 +145,17 @@ def main() -> None:
         evaluation_workflow=EvaluationWorkflow((functional_step, hls_step)),
         statistics=CSVStatisticsCollector(OUTPUT_DIR / "statistics"),
         objective_set=objective_set,
-        max_workers=positive_integer("GENIO_MAX_WORKERS", 16),
+        max_workers=16,
         work_dir=OUTPUT_DIR / "work",
         execution_metadata={
             "vitis_libraries_path": str(VITIS_LIBRARIES_PATH.resolve()),
-            "hls_include_paths": [str(HLS_INCLUDE_PATH.resolve())],
+            "hls_include_paths": [str(HLS_IMPLEMENTATIONS_INCLUDE_PATH.resolve())],
         },
         keep_all_individuals=False,
-    ).run()
+    )
+
+    result = session.run()
+
     print(f"Evaluations: {len(result.evaluations)}")
     for individual in result.best_individuals:
         print("BEST", individual.id, individual.genotype)
