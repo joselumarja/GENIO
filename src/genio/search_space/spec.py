@@ -35,13 +35,25 @@ class SlotSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class DesignDimensionSpec:
+    """Store one design gene's alternatives and its grouped parameter names.
+
+    An empty ``parameter_names`` denotes a simple parameter; otherwise each
+    alternative maps those names to their concrete values.
+    """
+
+    alternatives: tuple[Any, ...]
+    parameter_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SearchScenarioSpec:
     """Describe an expanded finite search scenario.
 
     Attributes:
         id: Stable scenario identifier used in individuals and generated IDs.
         slots: Optional ordered pipeline dimensions of the search space.
-        design_spaces: Discrete parameter domains and their allowed values.
+        design_spaces: Discrete parameter domains and their design dimensions.
         domain_order: Order of domains as declared in the scenario JSON, including
             ``pipeline`` when present. Determines genotype gene positions. When
             constructing a spec directly, the default uses pipeline first.
@@ -50,6 +62,6 @@ class SearchScenarioSpec:
 
     id: str
     slots: tuple[SlotSpec, ...] = ()
-    design_spaces: dict[str, dict[str, tuple[Any, ...]]] = field(default_factory=dict)
+    design_spaces: dict[str, dict[str, DesignDimensionSpec]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     domain_order: tuple[str, ...] = ()

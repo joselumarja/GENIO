@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import ast
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
@@ -13,8 +13,7 @@ from typing import Any, Callable, ClassVar
 
 from genio.core import Individual, StageChoice
 
-from .spec import SearchScenarioSpec
-from .spec import SlotSpec
+from .spec import DesignDimensionSpec, SearchScenarioSpec, SlotSpec
 
 
 def _is_odd(value: int) -> bool:
@@ -161,7 +160,7 @@ class SearchSpace:
     @property
     def design_lengths(self) -> tuple[int, ...]:
         """Return the number of values for each design parameter."""
-        return tuple(len(values) for _, _, values in self._design_parameters())
+        return tuple(len(spec.alternatives) for _, _, spec in self._design_parameters())
 
     @property
     def genotype_lengths(self) -> tuple[int, ...]:
@@ -187,7 +186,7 @@ class SearchSpace:
     def checkpoint_signature(self) -> dict[str, Any]:
         """Return the complete ordered scenario structure for compatibility checks."""
 
-        return {
+        signature = {
             "scenario_id": self.scenario.id,
             "metadata": self.scenario.metadata,
             "domain_order": list(self._domain_order()),
@@ -210,13 +209,18 @@ class SearchSpace:
                 {
                     "domain": domain,
                     "parameters": [
-                        {"name": name, "values": list(values)}
-                        for name, values in parameters.items()
+                        {
+                            "name": name,
+                            "values": list(spec.alternatives),
+                            **({"parameter_names": list(spec.parameter_names)} if spec.parameter_names else {}),
+                        }
+                        for name, spec in parameters.items()
                     ],
                 }
                 for domain, parameters in self.scenario.design_spaces.items()
             ],
         }
+        return signature
 
     def checkpoint_state(self) -> dict[str, int]:
         """Return the next automatically allocated individual identifier."""
@@ -262,7 +266,11 @@ class SearchSpace:
                 values_by_domain = values_result.setdefault("pipeline", [])
                 values_by_domain.append(alternatives[gene])
             else:
-                values_result.setdefault(domain, {})[name] = alternatives[gene]
+                domain_values = values_result.setdefault(domain, {})
+                if self.scenario.design_spaces[domain][name].parameter_names:
+                    domain_values.update(alternatives[gene])
+                else:
+                    domain_values[name] = alternatives[gene]
 
         if "pipeline" in values_result:
             values_result["pipeline"] = tuple(values_result["pipeline"])
@@ -616,11 +624,20 @@ class SearchSpace:
 
     def _design_to_genotype(self, design: dict[str, Any]) -> tuple[int, ...]:
         genes: list[int] = []
-        for domain, name, values in self._design_parameters():
+        for domain, name, spec in self._design_parameters():
             domain_design = design.get(domain, {})
             if not isinstance(domain_design, dict):
                 raise ValueError(f"Design domain {domain!r} must be a mapping.")
-            value = domain_design.get(name, values[0])
+            values = spec.alternatives
+            group = spec.parameter_names
+            value = (
+                {
+                    parameter: domain_design.get(parameter, values[0][parameter])
+                    for parameter in group
+                }
+                if group
+                else domain_design.get(name, values[0])
+            )
             try:
                 genes.append(values.index(value))
             except ValueError as exc:
@@ -645,11 +662,11 @@ class SearchSpace:
                     f"[0, {length})."
                 )
 
-    def _design_parameters(self) -> tuple[tuple[str, str, tuple[Any, ...]], ...]:
+    def _design_parameters(self) -> tuple[tuple[str, str, DesignDimensionSpec], ...]:
         return tuple(
-            (domain, name, values)
+            (domain, name, spec)
             for domain, parameters in self.scenario.design_spaces.items()
-            for name, values in parameters.items()
+            for name, spec in parameters.items()
         )
 
     def _domain_order(self) -> tuple[str, ...]:
@@ -667,8 +684,8 @@ class SearchSpace:
                 )
             else:
                 dimensions.extend(
-                    (domain, name, values)
-                    for name, values in self.scenario.design_spaces[domain].items()
+                    (domain, name, spec.alternatives)
+                    for name, spec in self.scenario.design_spaces[domain].items()
                 )
         return tuple(dimensions)
 
@@ -721,21 +738,55 @@ class SearchSpace:
         )
 
     @classmethod
-    def _build_design_spaces(cls, test_config: dict[str, Any]) -> dict[str, dict[str, tuple[Any, ...]]]:
-        if "design_spaces" in test_config:
-            return {
-                domain: cls._build_design_space(parameters)
-                for domain, parameters in test_config["design_spaces"].items()
-                if domain != "pipeline"
-            }
-        return {}
+    def _build_design_spaces(
+        cls, test_config: dict[str, Any]
+    ) -> dict[str, dict[str, DesignDimensionSpec]]:
+        spaces: dict[str, dict[str, DesignDimensionSpec]] = {}
+        for domain, parameters in test_config["design_spaces"].items():
+            if domain == "pipeline":
+                continue
+            if "parameters" in parameters and "type" not in parameters["parameters"]:
+                names, choices = cls._expand_parameters(
+                    parameters["parameters"], parameters.get("constraints", [])
+                )
+                if not names:
+                    raise ValueError(f"Combined design domain {domain!r} has no parameters.")
+                spaces[domain] = {
+                    domain: DesignDimensionSpec(choices, parameter_names=names)
+                }
+            else:
+                spaces[domain] = cls._build_design_space(parameters)
+        return spaces
 
     @classmethod
-    def _build_design_space(cls, design_space_config: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
-        return {
-            name: cls._parameter_values(spec)
-            for name, spec in design_space_config.items()
-        }
+    def _build_design_space(
+        cls, design_space_config: dict[str, Any]
+    ) -> dict[str, DesignDimensionSpec]:
+        dimensions: dict[str, DesignDimensionSpec] = {}
+        used_names: set[str] = set()
+        for name, spec in design_space_config.items():
+            if "parameters" not in spec:
+                if name in used_names:
+                    raise ValueError(f"Duplicate design parameter {name!r}.")
+                dimensions[name] = DesignDimensionSpec(cls._parameter_values(spec))
+                used_names.add(name)
+                continue
+
+            names, choices = cls._expand_parameters(
+                spec["parameters"], spec.get("constraints", [])
+            )
+            if not names:
+                raise ValueError(f"Combined design parameter {name!r} has no parameters.")
+            duplicates = used_names.intersection((*names, name))
+            if duplicates or name in names:
+                raise ValueError(
+                    f"Duplicate design parameter names in {name!r}: "
+                    f"{sorted(duplicates | ({name} & set(names)))!r}."
+                )
+            dimensions[name] = DesignDimensionSpec(choices, parameter_names=names)
+            used_names.update(names)
+            used_names.add(name)
+        return dimensions
 
     @staticmethod
     def _load_stage_definitions(
@@ -798,16 +849,18 @@ class SearchSpace:
                 )
             ]
 
-        parameter_names = tuple(parameter_specs)
-        parameter_values = tuple(
-            cls._parameter_values(parameter_specs[name]) for name in parameter_names
+        tokens = {
+            parameter["name"]: parameter["token"]
+            for parameter in stage_definition.get("parameters", [])
+        }
+        _, choices = cls._expand_parameters(
+            parameter_specs,
+            [*stage_definition.get("constraints", []), *candidate_config.get("constraints", [])],
+            tokens=tokens,
         )
 
         alternatives: list[StageChoice] = []
-        for values in product(*parameter_values):
-            parameters = dict(zip(parameter_names, values))
-            if not cls._satisfies_constraints(parameters, stage_definition):
-                continue
+        for parameters in choices:
             alternatives.append(
                 StageChoice(
                     slot=slot_index,
@@ -818,6 +871,45 @@ class SearchSpace:
             )
 
         return alternatives
+
+    @classmethod
+    def _expand_parameters(
+        cls,
+        specs: dict[str, Any],
+        constraints: Sequence[str] = (),
+        *,
+        tokens: dict[str, str] | None = None,
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...]]:
+        """Expand nested parameter groups and filter at each group's scope."""
+        names: list[str] = []
+        dimensions: list[tuple[dict[str, Any], ...]] = []
+        for name, spec in specs.items():
+            if "parameters" in spec:
+                child_names, choices = cls._expand_parameters(
+                    spec["parameters"], spec.get("constraints", [])
+                )
+                if not child_names:
+                    raise ValueError(f"Combined parameter {name!r} has no parameters.")
+                names.extend(child_names)
+                dimensions.append(choices)
+            else:
+                names.append(name)
+                dimensions.append(tuple({name: value} for value in cls._parameter_values(spec)))
+
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate parameter names within a combined configuration.")
+
+        choices = []
+        for combination in product(*dimensions):
+            values = {key: value for choice in combination for key, value in choice.items()}
+            token_values = {f"@{key}": value for key, value in values.items()}
+            if tokens is not None:
+                token_values.update(
+                    {tokens[key]: value for key, value in values.items() if key in tokens}
+                )
+            if cls._constraints_satisfied(constraints, token_values):
+                choices.append(values)
+        return tuple(names), tuple(choices)
 
     @staticmethod
     def _parameter_values(parameter_spec: dict[str, Any]) -> tuple[Any, ...]:
@@ -856,30 +948,12 @@ class SearchSpace:
         raise ValueError(f"Unsupported parameter spec type: {parameter_type!r}.")
 
     @classmethod
-    def _satisfies_constraints(
-        cls,
-        parameters: dict[str, Any],
-        stage_definition: dict[str, Any],
+    def _constraints_satisfied(
+        cls, constraints: Sequence[str], token_values: dict[str, Any]
     ) -> bool:
-        constraints = stage_definition.get("constraints", [])
-        if not constraints:
-            return True
-
-        token_values = cls._constraint_token_values(parameters, stage_definition)
-        return all(cls._evaluate_constraint(constraint, token_values) for constraint in constraints)
-
-    @staticmethod
-    def _constraint_token_values(
-        parameters: dict[str, Any],
-        stage_definition: dict[str, Any],
-    ) -> dict[str, Any]:
-        values: dict[str, Any] = {}
-        for parameter_definition in stage_definition.get("parameters", []):
-            name = parameter_definition["name"]
-            token = parameter_definition["token"]
-            if name in parameters:
-                values[token] = parameters[name]
-        return values
+        return all(
+            cls._evaluate_constraint(constraint, token_values) for constraint in constraints
+        )
 
     @classmethod
     def _evaluate_constraint(

@@ -61,7 +61,7 @@ from genio.objective import (
     OptimizationDirection,
     WeightedMeanScalarizer,
 )
-from genio.search_space import SearchScenarioSpec, SearchSpace, SlotSpec
+from genio.search_space import DesignDimensionSpec, SearchScenarioSpec, SearchSpace, SlotSpec
 from genio.session import OptimizationSession
 from genio.statistics import (
     CSVStatisticsCollector,
@@ -81,6 +81,7 @@ __all__ = [
     "ComposerError",
     "CompositeStatisticsCollector",
     "CSVStatisticsCollector",
+    "DesignDimensionSpec",
     "CheckpointCompatibilityError",
     "CheckpointError",
     "CheckpointFormatError",
