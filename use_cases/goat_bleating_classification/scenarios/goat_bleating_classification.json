@@ -36,13 +36,13 @@
       "Hop_length": {
         "type": "integer_range",
         "start": 128,
-        "stop": 1024,
+        "stop": 1025,
         "step": 128
       },
       "MEL_band_number": {
         "type": "integer_range",
         "start": 16,
-        "stop": 160,
+        "stop": 161,
         "step": 16
       },
       "band_limit_hz": {
@@ -50,13 +50,13 @@
           "lower_band_limit_hz": {
             "type": "integer_range",
             "start": 0,
-            "stop": 300,
+            "stop": 301,
             "step": 50
           },
           "upper_band_limit_hz":{
             "type": "integer_range",
             "start": 2000,
-            "stop": 8000,
+            "stop": 8001,
             "step": 1000
           }
         },
