@@ -1,0 +1,15 @@
+{
+  "stage": "global_average_pooling",
+  "imports": [
+    "from tensorflow.keras import layers"
+  ],
+  "function": [
+    "@output_0 = layers.GlobalAveragePooling2D()(@input_0)"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@input_0": "Input spatial Keras tensor from the previous pipeline step.",
+    "@output_0": "Spatially averaged output Keras tensor."
+  },
+  "source": "tensorflow"
+}

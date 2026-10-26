@@ -1,6 +1,6 @@
 {
   "id": "goat_bleating_classification",
-  "description": "Search space for goat bleating sound preproccessing parameters",
+  "description": "Goat bleating preprocessing and VGGish-style neural architecture search space",
   "resources": {
     "datasets": {
       "train": "",
@@ -64,6 +64,240 @@
           "@lower_band_limit_hz < @upper_band_limit_hz"
         ]
       }
-    }
+    },
+    "pipeline": [
+      {
+        "slot": 0,
+        "candidates": [
+          {
+            "stage": "conv_block",
+            "parameters": {
+              "filters": {
+                "type": "integer_range", 
+                "start": 4, 
+                "stop": 65, 
+                "step": 2
+              },
+              "kernel_rows": {
+                "type": "choice", 
+                "values": [3, 5, 7, 9, 11]
+              },
+              "kernel_cols": {
+                "type": "choice", 
+                "values": [3, 5, 7, 9, 11, 13, 15]
+              },
+              "activation": {
+                "type": "choice", 
+                "values": ["relu", "elu"]
+              },
+              "pool_type": {
+                "type": "choice", 
+                "value": ["max", "average"]
+              },
+              "pool_size": {
+                "type": "choice", 
+                "value": [2]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 1,
+        "candidates": [
+          {
+            "stage": "dependent_conv_block",
+            "parameters": {
+              "filters_ratio": {
+                "type": "choice", 
+                "values": [2]
+              },
+              "kernel_rows": {
+                "type": "choice", 
+                "values": [3, 5, 7]
+              },
+              "kernel_cols": {
+                "type": "choice", 
+                "values": [3, 5, 7, 9]
+              },
+              "activation": {
+                "type": "choice", 
+                "values": ["relu", "elu"]
+              },
+              "pool_type": {
+                "type": "choice", 
+                "values": ["max", "average"]
+              },
+              "pool_size": {
+                "type": "choice", 
+                "values": [2]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 2,
+        "candidates": [
+          {"stage": "nop"},
+          {
+            "stage": "dependent_conv_block",
+            "parameters": {
+              "filters_ratio": {
+                "type": "choice", 
+                "values": [2]
+              },
+              "kernel_rows": {
+                "type": "choice", 
+                "values": [3, 5, 7]
+              },
+              "kernel_cols": {
+                "type": "choice", 
+                "values": [3, 5, 7, 9]
+              },
+              "activation": {
+                "type": "choice", 
+                "values": ["relu", "elu"]
+              },
+              "pool_type": {
+                "type": "choice", 
+                "values": ["max", "average"]
+              },
+              "pool_size": {
+                "type": "choice", 
+                "values": [2]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 3,
+        "candidates": [
+          {"stage": "nop"},
+          {
+            "stage": "dependent_conv_block",
+            "parameters": {
+              "filters_ratio": {
+                "type": "choice", 
+                "values": [2]
+              },
+              "kernel_rows": {
+                "type": "choice", 
+                "values": [3, 5, 7]
+              },
+              "kernel_cols": {
+                "type": "choice", 
+                "values": [3, 5, 7, 9]
+              },
+              "activation": {
+                "type": "choice", 
+                "values": ["relu", "elu"]
+              },
+              "pool_type": {
+                "type": "choice", 
+                "value": ["max", "average"]
+              },
+              "pool_size": {
+                "type": "choice", 
+                "values": [2]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 4,
+        "candidates": [
+          {
+            "stage": "flatten"
+          },
+          {
+            "stage": "global_average_pooling"
+          }
+        ]
+      },
+      {
+        "slot": 5,
+        "candidates": [
+          {
+            "stage": "dense",
+            "parameters": {
+              "units": {
+                "type": "choice", 
+                "values": [512, 1024, 2048, 4096]
+              },
+              "activation": {
+                "type": "constant", 
+                "value": "relu"
+              },
+              "dropout": {
+                "type": "choice", 
+                "values": [0.0, 0.25]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 6,
+        "candidates": [
+          {"stage": "nop"},
+          {
+            "stage": "dense",
+            "parameters": {
+              "units": {
+                "type": "choice", 
+                "values": [512, 1024, 2048, 4096]
+              },
+              "activation": {
+                "type": "constant", 
+                "value": "relu"
+              },
+              "dropout": {
+                "type": "choice", 
+                "values": [0.0, 0.25]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 7,
+        "candidates": [
+          {
+            "stage": "dense",
+            "parameters": {
+              "units": {
+                "type": "choice", 
+                "values": [64, 128, 256]
+              },
+              "activation": {
+                "type": "constant", 
+                "value": "relu"
+              },
+              "dropout": {
+                "type": "constant", 
+                "value": 0.0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "slot": 8,
+        "candidates": [
+          {
+            "stage": "classifier",
+            "parameters": {
+              "activation": {
+                "type": "constant", 
+                "value": "softmax"
+              }
+            }
+          }
+        ]
+      }
+    ]
   }
 }

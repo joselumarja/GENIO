@@ -1,0 +1,27 @@
+{
+  "id": "global_average_pooling",
+  "name": "Global Average Pooling",
+  "category": "neural_network",
+  "description": "Average spatial dimensions of an input tensor into a feature vector.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "tensor",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "tensor",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "tensorflow": "implementations/functional/tensorflow/global_average_pooling.json"
+    }
+  },
+  "composer_resolved": []
+}

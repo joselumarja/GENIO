@@ -1,0 +1,15 @@
+{
+  "stage": "flatten",
+  "imports": [
+    "from tensorflow.keras import layers"
+  ],
+  "function": [
+    "@output_0 = layers.Flatten()(@input_0)"
+  ],
+  "configuration": [],
+  "tokens": {
+    "@input_0": "Input Keras tensor from the previous pipeline step.",
+    "@output_0": "Flattened output Keras tensor."
+  },
+  "source": "tensorflow"
+}

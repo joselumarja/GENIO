@@ -1,0 +1,30 @@
+{
+  "stage": "dependent_conv_block",
+  "imports": [
+    "from tensorflow.keras import layers"
+  ],
+  "function": [
+    "conv = layers.Conv2D(@FILTERS, (@K_ROWS, @K_COLS), padding='same', activation=@ACTIVATION)(@input_0)",
+    "@output_0 = (layers.MaxPooling2D if @POOL_TYPE == 'max' else layers.AveragePooling2D)(pool_size=(@POOL_SIZE, @POOL_SIZE))(conv)"
+  ],
+  "configuration": [
+    "@FILTERS_RATIO",
+    "@K_ROWS",
+    "@K_COLS",
+    "@ACTIVATION",
+    "@POOL_TYPE",
+    "@POOL_SIZE"
+  ],
+  "tokens": {
+    "@FILTERS_RATIO": "Candidate filters_ratio used by the composer to derive FILTERS from the last active convolution block.",
+    "@FILTERS": "Composer-resolved output channel count derived from filters_ratio and the last active convolution block, including when intervening slots are nop.",
+    "@K_ROWS": "Candidate kernel_rows: convolution kernel height.",
+    "@K_COLS": "Candidate kernel_cols: convolution kernel width.",
+    "@ACTIVATION": "Candidate activation name for the convolution.",
+    "@POOL_TYPE": "Candidate pool_type: max selects MaxPooling2D; average selects AveragePooling2D.",
+    "@POOL_SIZE": "Candidate pool_size used for both pooling dimensions.",
+    "@input_0": "Input Keras tensor from the previous pipeline step.",
+    "@output_0": "Output Keras tensor after convolution and pooling."
+  },
+  "source": "tensorflow"
+}

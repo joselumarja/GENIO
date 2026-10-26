@@ -1,0 +1,27 @@
+{
+  "id": "flatten",
+  "name": "Flatten",
+  "category": "neural_network",
+  "description": "Flatten an input tensor into a feature vector.",
+  "parameters": [],
+  "interface": {
+    "inputs": [
+      {
+        "format": "tensor",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "tensor",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "tensorflow": "implementations/functional/tensorflow/flatten.json"
+    }
+  },
+  "composer_resolved": []
+}

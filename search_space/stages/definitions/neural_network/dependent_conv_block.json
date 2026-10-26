@@ -1,0 +1,78 @@
+{
+  "id": "dependent_conv_block",
+  "name": "Dependent Convolutional Block",
+  "category": "neural_network",
+  "description": "Apply convolution and pooling with filters derived from the last active convolutional block, skipping nop stages.",
+  "parameters": [
+    {
+      "name": "filters_ratio",
+      "token": "@FILTERS_RATIO",
+      "type": "integer",
+      "description": "Multiplier for the filters of the last active convolutional block."
+    },
+    {
+      "name": "kernel_rows",
+      "token": "@K_ROWS",
+      "type": "integer",
+      "description": "Convolution kernel height."
+    },
+    {
+      "name": "kernel_cols",
+      "token": "@K_COLS",
+      "type": "integer",
+      "description": "Convolution kernel width."
+    },
+    {
+      "name": "activation",
+      "token": "@ACTIVATION",
+      "type": "enum",
+      "description": "Activation function applied after convolution."
+    },
+    {
+      "name": "pool_type",
+      "token": "@POOL_TYPE",
+      "type": "enum",
+      "description": "Pooling operation (max or average)."
+    },
+    {
+      "name": "pool_size",
+      "token": "@POOL_SIZE",
+      "type": "integer",
+      "description": "Pooling window size."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "tensor",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "tensor",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "tensorflow": "implementations/functional/tensorflow/dependent_conv_block.json"
+    }
+  },
+  "composer_resolved": [
+    {
+      "name": "filters",
+      "token": "@FILTERS",
+      "description": "filters_ratio * filters of the last ACTIVE convolutional block, skipping nop stages."
+    }
+  ],
+  "constraints": [
+    "@FILTERS_RATIO > 0",
+    "@K_ROWS > 0",
+    "@K_COLS > 0",
+    "is_odd(@K_ROWS)",
+    "is_odd(@K_COLS)",
+    "@POOL_SIZE > 0"
+  ]
+}

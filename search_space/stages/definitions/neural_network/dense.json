@@ -1,0 +1,51 @@
+{
+  "id": "dense",
+  "name": "Dense",
+  "category": "neural_network",
+  "description": "Apply a fully connected layer, activation, and dropout.",
+  "parameters": [
+    {
+      "name": "units",
+      "token": "@UNITS",
+      "type": "integer",
+      "description": "Number of output units."
+    },
+    {
+      "name": "activation",
+      "token": "@ACTIVATION",
+      "type": "enum",
+      "description": "Activation function for the dense layer."
+    },
+    {
+      "name": "dropout",
+      "token": "@DROPOUT",
+      "type": "number",
+      "description": "Fraction of units dropped during training."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "tensor",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "tensor",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "tensorflow": "implementations/functional/tensorflow/dense.json"
+    }
+  },
+  "composer_resolved": [],
+  "constraints": [
+    "@UNITS > 0",
+    "@DROPOUT >= 0",
+    "@DROPOUT < 1"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "stage": "dense",
+  "imports": [
+    "from tensorflow.keras import layers"
+  ],
+  "function": [
+    "dense = layers.Dense(@UNITS, activation=@ACTIVATION)(@input_0)",
+    "@output_0 = layers.Dropout(@DROPOUT)(dense) if @DROPOUT else dense"
+  ],
+  "configuration": [
+    "@UNITS",
+    "@ACTIVATION",
+    "@DROPOUT"
+  ],
+  "tokens": {
+    "@UNITS": "Candidate units: number of neurons in the Dense layer.",
+    "@ACTIVATION": "Candidate activation name for the Dense layer.",
+    "@DROPOUT": "Candidate dropout rate; zero skips the Dropout layer.",
+    "@input_0": "Input Keras tensor from the previous pipeline step.",
+    "@output_0": "Output Keras tensor after the optional dropout."
+  },
+  "source": "tensorflow"
+}

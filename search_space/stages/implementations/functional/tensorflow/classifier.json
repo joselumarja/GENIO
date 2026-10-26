@@ -1,0 +1,19 @@
+{
+  "stage": "classifier",
+  "imports": [
+    "from tensorflow.keras import layers"
+  ],
+  "function": [
+    "@output_0 = layers.Dense(@NUM_CLASSES, activation=@ACTIVATION)(@input_0)"
+  ],
+  "configuration": [
+    "@ACTIVATION"
+  ],
+  "tokens": {
+    "@NUM_CLASSES": "Composer-resolved number of output classes from the classification task.",
+    "@ACTIVATION": "Candidate activation name for the classifier output.",
+    "@input_0": "Input Keras tensor from the previous pipeline step.",
+    "@output_0": "Class prediction Keras tensor."
+  },
+  "source": "tensorflow"
+}

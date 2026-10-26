@@ -1,0 +1,40 @@
+{
+  "id": "classifier",
+  "name": "Classifier",
+  "category": "neural_network",
+  "description": "Map a feature tensor to dataset classes with a classification activation.",
+  "parameters": [
+    {
+      "name": "activation",
+      "token": "@ACTIVATION",
+      "type": "enum",
+      "description": "Activation function for the class predictions."
+    }
+  ],
+  "interface": {
+    "inputs": [
+      {
+        "format": "tensor",
+        "token": "@input_0"
+      }
+    ],
+    "outputs": [
+      {
+        "format": "tensor",
+        "token": "@output_0"
+      }
+    ]
+  },
+  "implementations": {
+    "functional": {
+      "tensorflow": "implementations/functional/tensorflow/classifier.json"
+    }
+  },
+  "composer_resolved": [
+    {
+      "name": "num_classes",
+      "token": "@NUM_CLASSES",
+      "description": "Number of classes inferred from the dataset by the composer."
+    }
+  ]
+}
