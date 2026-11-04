@@ -11,47 +11,36 @@
     "preproccessing_configuration": {
       "sample_rate":{
         "type": "choice",
-        "values": [8000, 12000, 16000, 22050]
+        "values": [16000, 22050, 44100]
       },
-      "window_sampling": {
-        "parameters": {
-          "window_size_samples": {
-            "type": "choice",
-            "values": [4000, 8000, 12000, 16000, 20000, 22050, 24000, 28000, 32000]
-          },
-          "window_hop_samples": {
-            "type": "choice",
-            "values": [2000, 4000, 6000, 8000, 10000, 11025, 12000, 14000, 16000]
-          }
-        },
-        "constraints": [
-          "@window_hop_samples <= @window_size_samples"
-        ]
+      
+      "window_size_samples_ratio": {
+        "type": "choice",
+        "values": [0.25, 0.5, 0.75, 1, 1.5, 2]
+      },
+
+      "window_hop_samples_ratio": {
+        "type": "choice",
+        "values": [0.25, 0.5, 0.75, 1]
       },
       
       "FFT_size": {
         "type": "choice",
-        "values": [256, 512, 1024, 2048, 4096]
+        "values": [512, 1024, 2048, 4096]
       },
-      "Hop_length": {
-        "type": "integer_range",
-        "start": 128,
-        "stop": 1025,
-        "step": 128
+      "Hop_length_ratio": {
+        "type": "choice",
+        "values": [0.25, 0.5]
       },
       "MEL_band_number": {
-        "type": "integer_range",
-        "start": 16,
-        "stop": 161,
-        "step": 16
+        "type": "choice",
+        "values": [8, 16, 32, 48, 64, 96, 128]
       },
       "band_limit_hz": {
         "parameters": {
           "lower_band_limit_hz": {
-            "type": "integer_range",
-            "start": 0,
-            "stop": 301,
-            "step": 50
+            "type": "choice",
+            "values": [0, 50, 100, 200, 300]
           },
           "upper_band_limit_hz":{
             "type": "integer_range",
@@ -64,155 +53,6 @@
           "@lower_band_limit_hz < @upper_band_limit_hz"
         ]
       }
-    },
-    "pipeline": [
-      {
-        "slot": 0,
-        "candidates": [
-          {
-            "stage": "conv_block",
-            "parameters": {
-              "filters": {"type": "integer_range", "start": 32, "stop": 129, "step": 32},
-              "convolutions": {"type": "constant", "value": 1},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "choice", "values": ["relu", "elu"]},
-              "pool_type": {"type": "constant", "value": "max"},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          },
-          {
-            "stage": "separable_conv_block",
-            "parameters": {
-              "filters": {"type": "choice", "values": [32, 64, 128]},
-              "convolutions": {"type": "constant", "value": 1},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "choice", "values": ["relu", "elu"]},
-              "pool_type": {"type": "constant", "value": "max"},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 1,
-        "candidates": [
-          {
-            "stage": "conv_block",
-            "parameters": {
-              "filters": {"type": "choice", "values": [64, 128, 256]},
-              "convolutions": {"type": "choice", "values": [1, 2]},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "constant", "value": "relu"},
-              "pool_type": {"type": "choice", "values": ["max", "average"]},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          },
-          {
-            "stage": "separable_conv_block",
-            "parameters": {
-              "filters": {"type": "choice", "values": [64, 128, 256]},
-              "convolutions": {"type": "choice", "values": [1, 2]},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "constant", "value": "relu"},
-              "pool_type": {"type": "choice", "values": ["max", "average"]},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 2,
-        "candidates": [
-          {"stage": "nop"},
-          {
-            "stage": "conv_block",
-            "parameters": {
-              "filters": {"type": "choice", "values": [128, 256]},
-              "convolutions": {"type": "choice", "values": [1, 2]},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "choice", "values": ["relu", "elu"]},
-              "pool_type": {"type": "choice", "values": ["max", "average"]},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 3,
-        "candidates": [
-          {"stage": "nop"},
-          {
-            "stage": "conv_block",
-            "parameters": {
-              "filters": {"type": "choice", "values": [256, 512]},
-              "convolutions": {"type": "choice", "values": [1, 2]},
-              "kernel_size": {"type": "choice", "values": [3, 5]},
-              "activation": {"type": "constant", "value": "relu"},
-              "pool_type": {"type": "choice", "values": ["max", "average"]},
-              "pool_size": {"type": "constant", "value": 2}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 4,
-        "candidates": [
-          {"stage": "flatten"},
-          {"stage": "global_average_pooling"}
-        ]
-      },
-      {
-        "slot": 5,
-        "candidates": [
-          {
-            "stage": "dense",
-            "parameters": {
-              "units": {"type": "integer_range", "start": 256, "stop": 4097, "step": 256},
-              "activation": {"type": "choice", "values": ["relu", "elu"]},
-              "dropout": {"type": "choice", "values": [0.0, 0.25]}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 6,
-        "candidates": [
-          {"stage": "nop"},
-          {
-            "stage": "dense",
-            "parameters": {
-              "units": {"type": "choice", "values": [512, 1024, 2048, 4096]},
-              "activation": {"type": "constant", "value": "relu"},
-              "dropout": {"type": "choice", "values": [0.0, 0.25]}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 7,
-        "candidates": [
-          {
-            "stage": "dense",
-            "parameters": {
-              "units": {"type": "choice", "values": [64, 128, 256]},
-              "activation": {"type": "constant", "value": "relu"},
-              "dropout": {"type": "constant", "value": 0.0}
-            }
-          }
-        ]
-      },
-      {
-        "slot": 8,
-        "candidates": [
-          {
-            "stage": "classifier",
-            "parameters": {
-              "units": {"type": "constant", "value": "num_classes"},
-              "activation": {"type": "constant", "value": "softmax"}
-            }
-          }
-        ]
-      }
-    ]
+    }
   }
 }

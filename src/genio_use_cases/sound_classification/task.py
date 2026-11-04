@@ -34,12 +34,17 @@ class GoatBleatingClassificationTask(EvaluationTask):
         logs.mkdir(parents=True, exist_ok=True)
 
         parameters = self.individual.values["preproccessing_configuration"]
+
+        window_size_samples = parameters["sample_rate"] * parameters["window_size_samples_ratio"]
+        window_hop_samples = window_size_samples * parameters["window_hop_samples_ratio"]
+        hop_length = parameters["FFT_size"] * parameters["Hop_length_ratio"]
+
         replacements = {
             "SAMPLE_RATE": parameters["sample_rate"],
-            "WINDOWS_SIZE_SAMPLES": parameters["window_size_samples"],
-            "WINDOW_HOP_SAMPLES": parameters["window_hop_samples"],
+            "WINDOWS_SIZE_SAMPLES": window_size_samples,
+            "WINDOW_HOP_SAMPLES": window_hop_samples,
             "FFT_SIZE": parameters["FFT_size"],
-            "HOP_LENGTH": parameters["Hop_length"],
+            "HOP_LENGTH": hop_length,
             "MEL_BAND_NUMBER": parameters["MEL_band_number"],
             "LOWER_BAND_LIMIT_HZ": parameters["lower_band_limit_hz"],
             "UPPER_BAND_LIMIT_HZ": parameters["upper_band_limit_hz"],
