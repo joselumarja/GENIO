@@ -35,9 +35,9 @@ class GoatBleatingClassificationTask(EvaluationTask):
 
         parameters = self.individual.values["preproccessing_configuration"]
 
-        window_size_samples = parameters["sample_rate"] * parameters["window_size_samples_ratio"]
-        window_hop_samples = window_size_samples * parameters["window_hop_samples_ratio"]
-        hop_length = parameters["FFT_size"] * parameters["Hop_length_ratio"]
+        window_size_samples = int(parameters["sample_rate"] * parameters["window_size_samples_ratio"])
+        window_hop_samples = int(window_size_samples * parameters["window_hop_samples_ratio"])
+        hop_length = int(parameters["FFT_size"] * parameters["Hop_length_ratio"])
 
         replacements = {
             "SAMPLE_RATE": parameters["sample_rate"],
