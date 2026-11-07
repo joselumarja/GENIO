@@ -20,6 +20,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from genio import (  # noqa: E402
     CSVStatisticsCollector,
+    PopulationStatisticsCollector,
+    PopulationPlotConfig,
     EvaluationStep,
     EvaluationWorkflow,
     MetricObjective,
@@ -38,7 +40,7 @@ from genio_use_cases.sound_classification import (  # noqa: E402
 
 SCENARIO = (
     ROOT
-    / "use_cases/goat_bleating_classification/scenarios/goat_bleating_classification.json"
+    / "use_cases/goat_bleating_classification/scenarios/goat_bleating_classification_preprocessing.json"
 )
 UCAUDIO_PATH = Path("/home/joselu/Universidad/Doctorado/UCAudio")
 UCAUDIO_FILES_PATH = UCAUDIO_PATH / "src"
@@ -78,11 +80,15 @@ def main() -> None:
     )"""
 
     algorithm = GeneticSearch(
-        population_size=100,
-        max_generations=10,
+        population_size=20,
+        max_generations=2,
         balanced_initialization=False,
         random=Random(SEED)
     )
+
+    #statistics=CSVStatisticsCollector(UCAUDIO_PATH / "statistics")
+
+    statistics = PopulationStatisticsCollector(UCAUDIO_PATH / "statistics", plots=PopulationPlotConfig(every_batches=1))
 
     result = OptimizationSession(
         space,
@@ -98,7 +104,7 @@ def main() -> None:
             ),
             scalarizer=IdentityScalarizer()
         ),
-        statistics=CSVStatisticsCollector(UCAUDIO_PATH / "statistics"),
+        statistics=statistics,
         max_workers=MAX_WORKERS,
         work_dir=UCAUDIO_PATH / "work",
         cache_capacity={"sound_classification" : 300},

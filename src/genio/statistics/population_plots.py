@@ -5,26 +5,31 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from numbers import Integral
+from itertools import combinations
+from math import isfinite
+from numbers import Integral, Real
 from pathlib import Path
+import re
+from statistics import fmean
 from types import MappingProxyType
 from typing import Any
 
 from genio.core.result import ResultStatus
+from genio.objective.base import ObjectiveSchema, OptimizationDirection
+from genio.search_space.space import SearchSpace
 from genio.statistics.population_analysis import (
-    best_individual_gene_matrix,
     best_score_evolution,
     failure_rate_by_batch,
     gene_entropy,
-    gene_value_frequency,
     mean_pairwise_hamming_distance,
     objective_summary_by_batch,
     project_population_pca,
     score_summary_by_batch,
-    stage_frequency_by_slot,
     unique_genotype_ratio,
 )
 from genio.statistics.population_models import PopulationRecord, PopulationSnapshot
+
+_MISSING = object()
 
 
 class PopulationPlotError(RuntimeError):
@@ -37,7 +42,13 @@ class PopulationPlotDependencyError(PopulationPlotError):
 
 @dataclass(frozen=True, slots=True)
 class PopulationPlotConfig:
-    """Configure population plot cadence, selection, format, and failures."""
+    """Configure cadence, decision-gene selection, format, and failure policy.
+
+    An empty ``tracked_genes`` selects all decisions. A pipeline gene includes
+    its stage choice and all conditional parameters; a grouped design gene
+    includes every parameter in that group. Low-cardinality decisions use
+    composition counts; numeric decisions with over 20 values use box plots.
+    """
 
     every_batches: int | None = None
     tracked_genes: tuple[int, ...] = ()
@@ -84,11 +95,82 @@ class PopulationPlotResult:
         object.__setattr__(self, "warnings", tuple(self.warnings))
 
 
+@dataclass(frozen=True, slots=True)
+class _DecisionParameter:
+    label: str
+    gene: int
+    alternatives: tuple[Any, ...]
+    domain: str = ""
+    name: str = ""
+    slot: int | None = None
+    stage: str | None = None
+
+    def value(self, record: PopulationRecord) -> Any:
+        if self.slot is None:
+            return record.design.get(self.domain, {}).get(self.name, _MISSING)
+        if self.slot >= len(record.stages):
+            return _MISSING
+        if self.stage is None:
+            return record.stages[self.slot]
+        if record.stages[self.slot] != self.stage:
+            return _MISSING
+        return record.stage_parameters[self.slot].get(self.name, _MISSING)
+
+
 class PopulationPlotRenderer:
     """Render deterministic population plots from immutable captured data."""
 
     def __init__(self, config: PopulationPlotConfig | None = None) -> None:
         self.config = config or PopulationPlotConfig()
+        self._parameters: tuple[_DecisionParameter, ...] = ()
+        self._objective_schema: ObjectiveSchema | None = None
+
+    def configure(self, search_space: SearchSpace, objectives: ObjectiveSchema | None) -> None:
+        """Resolve real decision values, including conditional stage parameters."""
+
+        self._objective_schema = objectives
+        parameters: list[_DecisionParameter] = []
+        scenario = search_space.scenario
+        domains = scenario.domain_order or (
+            (("pipeline",) if scenario.slots else ()) + tuple(scenario.design_spaces)
+        )
+        gene = 0
+        for domain in domains:
+            if domain == "pipeline":
+                for slot in scenario.slots:
+                    parameters.append(_DecisionParameter(
+                        f"pipeline.{slot.index}.stage", gene,
+                        tuple(dict.fromkeys(choice.stage for choice in slot.alternatives)),
+                        slot=slot.index,
+                    ))
+                    grouped: dict[tuple[str, str], list[Any]] = {}
+                    for choice in slot.alternatives:
+                        for name, value in choice.parameters.items():
+                            grouped.setdefault((choice.stage, name), []).append(value)
+                    for (stage, name), values in grouped.items():
+                        parameters.append(_DecisionParameter(
+                            f"pipeline.{slot.index}.{stage}.{name}", gene, tuple(values),
+                            slot=slot.index, stage=stage, name=name,
+                        ))
+                    gene += 1
+            else:
+                for name, dimension in scenario.design_spaces[domain].items():
+                    for parameter in dimension.parameter_names or (name,):
+                        values = tuple(
+                            value[parameter] if dimension.parameter_names else value
+                            for value in dimension.alternatives
+                        )
+                        parameters.append(_DecisionParameter(
+                            f"{domain}.{parameter}", gene, values,
+                            domain=domain, name=parameter,
+                        ))
+                    gene += 1
+        if any(gene >= len(search_space.genotype_lengths) for gene in self.config.tracked_genes):
+            raise ValueError("tracked_genes contains an unavailable gene index.")
+        self._parameters = tuple(
+            parameter for parameter in parameters
+            if not self.config.tracked_genes or parameter.gene in self.config.tracked_genes
+        )
 
     def render(
         self,
@@ -97,7 +179,7 @@ class PopulationPlotRenderer:
         best_individual_ids: Sequence[str] = (),
         target_dir: str | Path,
     ) -> PopulationPlotResult:
-        """Render every applicable MVP plot into ``target_dir``."""
+        """Render population diagnostics and one evolution plot per decision parameter."""
 
         normalized = tuple(snapshots)
         if any(not isinstance(snapshot, PopulationSnapshot) for snapshot in normalized):
@@ -112,8 +194,6 @@ class PopulationPlotRenderer:
         records = tuple(record for snapshot in normalized for record in snapshot.records)
         plotters: tuple[tuple[str, Callable[[], Any | str]], ...] = (
             ("population_size", lambda: self._plot_population_size(normalized)),
-            ("stage_distribution", lambda: self._plot_stage_distribution(normalized)),
-            ("gene_distribution", lambda: self._plot_gene_distribution(normalized)),
             ("gene_entropy", lambda: self._plot_gene_entropy(normalized)),
             ("unique_genotypes", lambda: self._plot_unique_genotypes(normalized)),
             ("genotype_distance", lambda: self._plot_genotype_distance(normalized)),
@@ -126,15 +206,17 @@ class PopulationPlotRenderer:
                 "aggregate_score_evolution",
                 lambda: self._plot_score_evolution(normalized),
             ),
-            (
-                "best_individuals_genes",
-                lambda: self._plot_best_individuals(records, best_individual_ids),
-            ),
             ("failure_rate", lambda: self._plot_failure_rate(normalized)),
             (
                 "objective_scatter",
                 lambda: self._plot_objective_scatter(records, best_individual_ids),
             ),
+        )
+        # Ordinals keep filenames safe and unique even for arbitrary parameter names.
+        plotters += tuple(
+            (f"parameter_{index:03d}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', parameter.label)[:100]}_evolution",
+             lambda parameter=parameter: self._plot_parameter_evolution(normalized, parameter))
+            for index, parameter in enumerate(self._parameters)
         )
         generated: list[str] = []
         skipped: dict[str, str] = {}
@@ -196,42 +278,49 @@ class PopulationPlotRenderer:
         axis.legend()
         return figure
 
-    def _plot_stage_distribution(self, snapshots: Sequence[PopulationSnapshot]):
-        if not snapshots or not snapshots[-1].records:
-            return "No final population is available."
-        frequencies = stage_frequency_by_slot(snapshots[-1])
-        labels = [
-            f"slot {slot}: {stage}"
-            for slot, stages in frequencies.items()
-            for stage in stages
+    def _plot_parameter_evolution(
+        self, snapshots: Sequence[PopulationSnapshot], parameter: _DecisionParameter,
+    ):
+        values = [
+            [value for record in snapshot if (value := parameter.value(record)) is not _MISSING]
+            for snapshot in snapshots
         ]
-        values = [count for stages in frequencies.values() for count in stages.values()]
-        if not labels:
-            return "Population records contain no stages."
-        figure, axis = self._figure("Stage distribution in final population", width=10)
-        positions = list(range(len(labels)))
-        axis.bar(positions, values)
-        axis.set_xticks(positions, labels, rotation=45, ha="right")
-        axis.set_ylabel("Individuals")
-        return figure
-
-    def _plot_gene_distribution(self, snapshots: Sequence[PopulationSnapshot]):
-        if not snapshots:
-            return "No population snapshots are available."
-        frequencies = gene_value_frequency(snapshots[-1])
-        labels = [
-            f"g{gene}={value}"
-            for gene, values in frequencies.items()
-            for value in values
-        ]
-        counts = [count for values in frequencies.values() for count in values.values()]
-        if not labels:
-            return "Final population contains no genotypes."
-        figure, axis = self._figure("Gene values in final population", width=10)
-        positions = list(range(len(labels)))
-        axis.bar(positions, counts)
-        axis.set_xticks(positions, labels, rotation=45, ha="right")
-        axis.set_ylabel("Individuals")
+        if not any(values):
+            return f"No active values for {parameter.label}."
+        batches = [snapshot.batch_index for snapshot in snapshots]
+        figure, axis = self._figure(parameter.label, width=10)
+        numeric = all(
+            isinstance(value, Real) and not isinstance(value, bool) and isfinite(value)
+            for value in parameter.alternatives
+        )
+        categories = tuple(dict.fromkeys(_category_label(value) for value in parameter.alternatives))
+        if numeric and len(categories) > 20:
+            available = [(batch, items) for batch, items in zip(batches, values) if items]
+            axis.boxplot(
+                [items for _, items in available],
+                positions=[batch for batch, _ in available], manage_ticks=False,
+            )
+            axis.plot(
+                [batch for batch, _ in available],
+                [fmean(items) for _, items in available],
+                marker="o", label="mean",
+            )
+            axis.set_ylabel(parameter.label)
+            axis.legend()
+        else:
+            counts = [Counter(_category_label(value) for value in items) for items in values]
+            series = [[count[category] for count in counts] for category in categories]
+            if len(batches) == 1:
+                bottom = 0
+                for category, items in zip(categories, series):
+                    axis.bar(batches, items, bottom=bottom, label=category)
+                    bottom += items[0]
+            else:
+                axis.stackplot(batches, *series, labels=categories)
+            axis.set_ylabel("Individuals (proposals)")
+            axis.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+        axis.set_xlabel("Batch")
+        axis.set_xticks(batches)
         return figure
 
     def _plot_gene_entropy(self, snapshots: Sequence[PopulationSnapshot]):
@@ -249,7 +338,9 @@ class PopulationPlotRenderer:
         figure, axis = self._figure("Gene entropy evolution")
         batches = [snapshot.batch_index for snapshot in snapshots]
         for gene in genes:
-            axis.plot(batches, [values[gene] for values in entropies], marker="o", label=f"g{gene}")
+            label = next((parameter.label for parameter in self._parameters
+                          if parameter.gene == gene), f"g{gene}")
+            axis.plot(batches, [values[gene] for values in entropies], marker="o", label=label)
         axis.set(xlabel="Batch", ylabel="Entropy (bits)")
         axis.legend()
         return figure
@@ -316,25 +407,44 @@ class PopulationPlotRenderer:
 
     def _plot_objective_evolution(self, snapshots: Sequence[PopulationSnapshot]):
         summaries = objective_summary_by_batch(snapshots)
-        names = tuple(sorted({name for values in summaries.values() for name in values}))
-        if not names:
+        names = self._objective_names(snapshots)
+        if not names or not any(summaries.values()):
             return "No valid objective values are available."
-        figure, axis = self._figure("Raw objective evolution")
-        for name in names:
+        figure, initial_axis = self._figure("Raw objective evolution", height=3.5 * len(names))
+        figure.delaxes(initial_axis)
+        axes = figure.subplots(len(names), 1, squeeze=False)[:, 0]
+        directions = (
+            dict(zip(self._objective_schema.names, self._objective_schema.directions))
+            if self._objective_schema is not None else {}
+        )
+        for name, axis in zip(names, axes):
             points = [
                 (batch, values[name])
                 for batch, values in summaries.items()
                 if name in values
             ]
             x = [point[0] for point in points]
-            means = [point[1].mean for point in points]
+            medians = [point[1].median for point in points]
             lower = [point[1].first_quartile for point in points]
             upper = [point[1].third_quartile for point in points]
-            axis.plot(x, means, marker="o", label=name)
-            axis.fill_between(x, lower, upper, alpha=0.15)
-        axis.set(xlabel="Batch", ylabel="Raw objective value")
-        axis.legend()
+            axis.plot(x, medians, marker="o", label="median")
+            axis.fill_between(x, lower, upper, alpha=0.15, label="interquartile range")
+            if name in directions:
+                direction = directions[name]
+                minimize = direction == OptimizationDirection.MINIMIZE
+                best = [point[1].minimum if minimize else point[1].maximum for point in points]
+                axis.plot(x, best, marker=".", label=f"best ({direction.value})")
+            axis.set(xlabel="Batch", ylabel=name, title=name)
+            axis.legend()
         return figure
+
+    def _objective_names(self, snapshots: Sequence[PopulationSnapshot]) -> tuple[str, ...]:
+        if self._objective_schema is not None:
+            return self._objective_schema.names
+        return tuple(dict.fromkeys(
+            name for snapshot in snapshots for record in snapshot.valid_objective_records
+            for name in record.objective_values
+        ))
 
     def _plot_score_evolution(self, snapshots: Sequence[PopulationSnapshot]):
         summaries = score_summary_by_batch(snapshots)
@@ -348,22 +458,6 @@ class PopulationPlotRenderer:
         axis.plot(x, [best[batch] for batch in x], marker="o", label="best")
         axis.set(xlabel="Batch", ylabel="Aggregate score")
         axis.legend()
-        return figure
-
-    def _plot_best_individuals(
-        self,
-        records: Sequence[PopulationRecord],
-        best_individual_ids: Sequence[str],
-    ):
-        matrix = best_individual_gene_matrix(records, best_individual_ids)
-        if not matrix:
-            return "The algorithm selected no individuals with genotypes."
-        import numpy as np
-
-        figure, axis = self._figure("Algorithm-selected genotypes")
-        image = axis.imshow(np.asarray(matrix, dtype=float), aspect="auto", cmap="viridis")
-        axis.set(xlabel="Gene", ylabel="Selected occurrence")
-        figure.colorbar(image, ax=axis, label="Gene value")
         return figure
 
     def _plot_failure_rate(self, snapshots: Sequence[PopulationSnapshot]):
@@ -381,36 +475,52 @@ class PopulationPlotRenderer:
         best_individual_ids: Sequence[str],
     ):
         valid = tuple(record for record in records if record.objectives_valid)
-        names = tuple(sorted({name for record in valid for name in record.objective_values}))
-        if len(names) != 2:
-            return "Exactly two raw objectives are required."
-        complete = tuple(
-            record for record in valid if all(name in record.objective_values for name in names)
+        names = self._objective_schema.names if self._objective_schema is not None else tuple(
+            dict.fromkeys(name for record in valid for name in record.objective_values)
         )
-        if not complete:
-            return "No complete two-objective records are available."
-        figure, axis = self._figure("Raw objective dispersion")
-        axis.scatter(
-            [record.objective_values[names[0]] for record in complete],
-            [record.objective_values[names[1]] for record in complete],
-            c=[record.batch_index for record in complete],
-            cmap="viridis",
-            alpha=0.75,
+        if len(names) < 2 or not valid:
+            return "At least two objectives with valid values are required."
+        pairs = tuple(combinations(names, 2))
+        columns = min(3, len(pairs))
+        rows = (len(pairs) + columns - 1) // columns
+        figure, initial_axis = self._figure(
+            "Raw objective dispersion", width=6 * columns, height=4 * rows,
         )
+        figure.delaxes(initial_axis)
+        axes = figure.subplots(rows, columns, squeeze=False).ravel()
+        for axis in axes[len(pairs):]:
+            figure.delaxes(axis)
         best_ids = set(best_individual_ids)
-        selected = [record for record in complete if record.individual_id in best_ids]
-        if selected:
-            axis.scatter(
-                [record.objective_values[names[0]] for record in selected],
-                [record.objective_values[names[1]] for record in selected],
-                facecolors="none",
-                edgecolors="red",
-                linewidths=1.5,
-                label="algorithm best",
+        for (left, right), axis in zip(pairs, axes):
+            complete = [record for record in valid if left in record.objective_values
+                        and right in record.objective_values]
+            scatter = axis.scatter(
+                [record.objective_values[left] for record in complete],
+                [record.objective_values[right] for record in complete],
+                c=[record.batch_index for record in complete], cmap="viridis", alpha=0.75,
             )
-            axis.legend()
-        axis.set(xlabel=names[0], ylabel=names[1])
+            selected = [record for record in complete if record.individual_id in best_ids]
+            if selected:
+                axis.scatter(
+                    [record.objective_values[left] for record in selected],
+                    [record.objective_values[right] for record in selected],
+                    facecolors="none", edgecolors="red", linewidths=1.5,
+                    label="algorithm best",
+                )
+                axis.legend()
+            axis.set(xlabel=left, ylabel=right)
+            figure.colorbar(scatter, ax=axis, label="Batch")
         return figure
+
+
+def _category_label(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return "{" + ", ".join(
+            f"{key!r}: {_category_label(value[key])}" for key in sorted(value)
+        ) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_category_label(item) for item in value) + "]"
+    return repr(value)
 
 
 __all__ = [

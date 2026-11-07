@@ -45,8 +45,7 @@ class PopulationAnalysisError(ValueError):
 class PopulationAnalysisCollector(StatisticsCollector):
     """Capture immutable population snapshots from session lifecycle events.
 
-    This phase stores analysis-ready data only; it does not write files or render
-    plots. Proposals and objective results are correlated by ``proposal_id`` so
+    Proposals and objective results are correlated by ``proposal_id`` so
     repeated individuals and genotypes remain distinct.
 
     Args:
@@ -109,7 +108,10 @@ class PopulationAnalysisCollector(StatisticsCollector):
     def on_session_started(self, session: OptimizationSession) -> None:
         """Reset capture state for a fresh optimization session."""
 
-        del session
+        self._renderer.configure(
+            session.search_space,
+            session.objective_set.schema if session.objective_set is not None else None,
+        )
         self._records.clear()
         self._batch_proposal_ids.clear()
         self._started_individual_ids.clear()
@@ -251,6 +253,7 @@ class PopulationAnalysisCollector(StatisticsCollector):
                 scope,
                 self._snapshots,
             )
+            self._write_analysis_outputs()
 
     def on_session_completed(self, result: SearchResult) -> None:
         """Capture the algorithm-selected individual IDs after the final batch."""
@@ -268,8 +271,7 @@ class PopulationAnalysisCollector(StatisticsCollector):
                 self._snapshots,
                 best_individual_ids=self._best_individual_ids,
             )
-        self._write_json(self.summary_path, self._analysis_summary())
-        self._write_json(self.manifest_path, self._analysis_manifest())
+        self._write_analysis_outputs()
 
     def snapshot(self) -> dict[str, Any]:
         """Return lightweight capture counts and selected IDs."""
@@ -326,7 +328,11 @@ class PopulationAnalysisCollector(StatisticsCollector):
     ) -> None:
         """Rebuild records from authoritative session batches and regenerate outputs."""
 
-        del session, evaluations
+        del evaluations
+        self._renderer.configure(
+            session.search_space,
+            session.objective_set.schema if session.objective_set is not None else None,
+        )
         if set(state) != {"batch_indexes", "best_individual_ids"}:
             raise PopulationAnalysisError(
                 "Population analysis checkpoint fields are invalid."
@@ -438,6 +444,9 @@ class PopulationAnalysisCollector(StatisticsCollector):
                 self._snapshots,
                 best_individual_ids=self._best_individual_ids,
             )
+        self._write_analysis_outputs()
+
+    def _write_analysis_outputs(self) -> None:
         self._write_json(self.summary_path, self._analysis_summary())
         self._write_json(self.manifest_path, self._analysis_manifest())
 

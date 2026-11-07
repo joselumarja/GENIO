@@ -1,4 +1,4 @@
-"""Convenience facade combining CSV and population-analysis statistics."""
+"""CSV history and schema-driven population evolution plots."""
 
 from __future__ import annotations
 
@@ -12,7 +12,14 @@ from genio.statistics.population_plots import PopulationPlotConfig
 
 
 class PopulationStatisticsCollector(CompositeStatisticsCollector):
-    """Generate CSV statistics and population analysis through one collector.
+    """Persist proposals and plot the evolution of the configured search problem.
+
+    Decision plots use actual design values and conditional stage parameters,
+    not mixed-radix gene indexes. Each objective has its own scale, median,
+    interquartile range, and best value according to its optimization direction.
+    Multi-objective runs also include pairwise objective dispersion. Populations
+    represent evaluated proposal batches, including repeated genotypes, rather
+    than the algorithm's survivor populations.
 
     Args:
         output_dir: Root containing CSV/JSON run files and the ``analysis`` folder.

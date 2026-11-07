@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+statistics = ["matplotlib>=3.6"]
 image_pipeline = ["opencv-python-headless>=4.8,<4.12"]
 xheep = ["opencv-python-headless>=4.8,<4.12"]
 
