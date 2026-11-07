@@ -58,6 +58,9 @@ COLS = 240
 FPGA_PART = "xa7a100tcsg324-1I"
 HLS_TIMEOUT_SECONDS = 10 * 60
 XHEEP_TIMEOUT_SECONDS = 15 * 60
+XHEEP_DOCKER_IMAGE = os.environ.get(
+    "GENIO_XHEEP_DOCKER_IMAGE", "ghcr.io/x-heep/x-heep/x-heep-toolchain:v1.0.5"
+)
 
 
 def stop_on_signal(signum, _frame) -> None:
@@ -139,6 +142,7 @@ def main(case_name) -> None:
                 application_name=case_name,
             ),
             "gr_heep_path": GR_HEEP_PATH,
+            "docker_image": XHEEP_DOCKER_IMAGE,
             "input_image_path": first_input_image(IMAGES_PATH),
         },
         timeout_seconds=XHEEP_TIMEOUT_SECONDS,

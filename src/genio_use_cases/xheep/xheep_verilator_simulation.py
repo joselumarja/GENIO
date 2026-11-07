@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
+from uuid import uuid4
 
 from genio.evaluation.task import ArtifactInput, EvaluationOutput, EvaluationTask, TaskContext
 from genio_use_cases.image_pipeline.hls_synthesis import HLSRTLArtifact
@@ -29,7 +30,7 @@ class XHeepVerilatorSimulationError(RuntimeError):
     """Report a nonzero exit from an X-HEEP build or simulation command.
 
     Attributes:
-        command: Fully rendered command, including the conda wrapper.
+        command: Fully rendered command, including the execution wrapper.
         returncode: Exit status returned by the command.
         log_paths: Stdout and stderr logs accumulated through the failed command.
     """
@@ -75,7 +76,9 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
     A :class:`GRHeepConfigurationComposer` renders the system configuration and
     overlays the upstream HLS RTL, optional image data, firmware, and integration
     files into an isolated copy of the GR-HEEP source tree. Each configured build
-    command is wrapped with ``conda run --no-capture-output``.
+    command runs in ``docker_image`` when provided, otherwise through local
+    ``conda run --no-capture-output``. Docker uses a login shell to activate the
+    X-HEEP image's toolchain and Conda environment.
 
     Firmware communicates results through textual records:
     ``GENIO_PERF:<region>:<cycles>``, ``GENIO_METRIC:<name>:<value>``, and the
@@ -89,8 +92,10 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         gr_heep_path: Source GR-HEEP checkout copied for the task.
         input_image_path: Optional image embedded by the generated overlay.
         application_name: Read-only firmware project name obtained from ``composer``.
-        conda_environment: Environment used for all build and simulation commands.
-        conda_tool: Conda-compatible executable.
+        conda_environment: Local environment used when docker_image is omitted.
+        conda_tool: Local Conda-compatible executable.
+        docker_image: Optional X-HEEP toolchain image selected by the session.
+        docker_tool: Docker-compatible executable on the host.
         make_tool: Replacement executable for commands beginning with ``make``.
         commands: Ordered command templates executed in the isolated checkout.
         metadata: Additional execution metadata and upstream artifact names.
@@ -108,6 +113,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
     conda_environment: str = "core-v-mini-mcu"
     conda_tool: str = "conda"
     make_tool: str = "make"
+    docker_image: str | None = None
+    docker_tool: str = "docker"
     commands: tuple[tuple[str, ...], ...] = (
         ("make", "mcu-gen"),
         ("make", "verilator-build"),
@@ -232,7 +239,21 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             raise XHeepVerilatorSimulationConfigurationError(
                 "X-HEEP simulation requires at least one build command."
             )
-        if not self.conda_environment or not self.conda_tool:
+        if self.docker_image is not None:
+            if (
+                not isinstance(self.docker_image, str)
+                or not self.docker_image.strip()
+                or self.docker_image.startswith("-")
+                or any(character.isspace() for character in self.docker_image)
+            ):
+                raise XHeepVerilatorSimulationConfigurationError(
+                    "docker_image must be a non-empty Docker image reference."
+                )
+            if not isinstance(self.docker_tool, str) or not self.docker_tool.strip():
+                raise XHeepVerilatorSimulationConfigurationError(
+                    "X-HEEP simulation requires a docker tool."
+                )
+        elif not self.conda_environment or not self.conda_tool:
             raise XHeepVerilatorSimulationConfigurationError(
                 "X-HEEP simulation requires a conda tool and environment."
             )
@@ -294,6 +315,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
 
         Existing task-local copies are removed. The destination is rejected if it
         resolves inside the source tree, preventing recursive self-copying.
+        Kilo state/worktrees are excluded: GR-HEEP recursively discovers templates
+        and would otherwise process unrelated sources from nested checkouts.
         """
 
         checkout_dir = context.workspace / "xheep"
@@ -308,7 +331,10 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         if checkout_dir.exists():
             shutil.rmtree(checkout_dir)
         checkout_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, checkout_dir, dirs_exist_ok=False, symlinks=True)
+        shutil.copytree(
+            source, checkout_dir, dirs_exist_ok=False, symlinks=True,
+            ignore=shutil.ignore_patterns(".kilo"),
+        )
         return checkout_dir
 
     def _apply_overlay(
@@ -346,14 +372,30 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         outputs: list[str] = []
         logs_dir = context.workspace / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
+        executed_commands: list[tuple[str, ...]] = []
         for index, configured_command in enumerate(self.commands, start=1):
-            command = self._command(configured_command)
+            container_name = f"genio-xheep-{uuid4().hex}" if self.docker_image else None
+            command = self._command(configured_command, checkout_dir, container_name)
+            executed_commands.append(command)
             name = f"{index:02d}_{self._command_name(command)}"
             stdout_path = logs_dir / f"{name}_stdout.log"
             stderr_path = logs_dir / f"{name}_stderr.log"
+            _write_json(
+                context.workspace / "artifacts" / "xheep_run_metadata.json",
+                {
+                    "status": "running",
+                    "command": command,
+                    "commands": executed_commands,
+                    "container_name": container_name,
+                    "log_paths": [str(path) for path in (*log_paths, stdout_path, stderr_path)],
+                },
+            )
             with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
                 "w", encoding="utf-8"
             ) as stderr_file:
+                if container_name is not None:
+                    self.runtime_state["container_name"] = container_name
+                    self.runtime_state["checkout_dir"] = checkout_dir.resolve()
                 result = subprocess.run(
                     command,
                     cwd=checkout_dir,
@@ -362,6 +404,8 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
                     stderr=stderr_file,
                     check=False,
                 )
+                self.runtime_state.pop("container_name", None)
+                self.runtime_state.pop("checkout_dir", None)
             stdout = stdout_path.read_text(encoding="utf-8")
             stderr = stderr_path.read_text(encoding="utf-8")
             log_paths.extend((stdout_path, stderr_path))
@@ -384,11 +428,41 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             context.workspace / "artifacts" / "xheep_run_metadata.json",
             {
                 "status": "success",
-                "commands": [list(self._command(command)) for command in self.commands],
+                "commands": executed_commands,
                 "log_paths": [str(path) for path in log_paths],
             },
         )
         return _XHeepRunResult(checkout_dir, tuple(log_paths), output)
+
+    def on_timeout(self, context: TaskContext) -> None:
+        """Stop the container and restore host ownership after forced termination."""
+
+        container_name = self.runtime_state.get("container_name")
+        if container_name is not None:
+            subprocess.run(
+                (self.docker_tool, "rm", "--force", container_name),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=3,
+            )
+            self.runtime_state.pop("container_name", None)
+            checkout_dir = self.runtime_state.get("checkout_dir")
+            if checkout_dir is not None and self.docker_image is not None:
+                # A forced container removal cannot execute the shell's EXIT trap.
+                subprocess.run(
+                    (
+                        self.docker_tool, "run", "--rm", "--user", "0:0",
+                        "--volume", f"{checkout_dir}:/workspace/x-heep",
+                        "--entrypoint", "/bin/chown", self.docker_image,
+                        "-hR", "--", f"{os.getuid()}:{os.getgid()}", "/workspace/x-heep",
+                    ),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                    timeout=5,
+                )
+                self.runtime_state.pop("checkout_dir", None)
 
     def _simulation_metrics(
         self,
@@ -484,11 +558,18 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
             )
         return self.composer
 
-    def _command(self, command: Sequence[str]) -> tuple[str, ...]:
-        """Render placeholders, substitute the make tool, and wrap with conda.
+    def _command(
+        self,
+        command: Sequence[str],
+        checkout_dir: Path | None = None,
+        container_name: str | None = None,
+    ) -> tuple[str, ...]:
+        """Render placeholders, substitute make, and wrap with Docker or Conda.
 
         The ``{application_name}`` token is replaced in every argument. Only a
         leading executable equal to ``make`` is replaced by :attr:`make_tool`.
+        Docker runs the tools as root, then returns checkout ownership to the host
+        user without following symlinks. The EXIT trap preserves tool failures.
         """
 
         if not command:
@@ -499,6 +580,28 @@ class XHeepVerilatorSimulationTask(EvaluationTask):
         )
         if normalized[0] == "make":
             normalized = (self.make_tool, *normalized[1:])
+        if self.docker_image is not None:
+            if checkout_dir is None or container_name is None:
+                raise XHeepVerilatorSimulationConfigurationError(
+                    "Docker commands require a checkout directory and container name."
+                )
+            return (
+                self.docker_tool,
+                "run",
+                "--rm",
+                "--name", container_name,
+                "--user", "0:0",
+                "--volume", f"{checkout_dir.resolve()}:/workspace/x-heep",
+                "--workdir", "/workspace/x-heep",
+                "--env", "LC_ALL=C",
+                self.docker_image,
+                "/bin/bash", "-lc",
+                'owner=$1; shift; '
+                'trap \'status=$?; chown -hR -- "$owner" /workspace/x-heep '
+                '|| exit $?; exit "$status"\' EXIT; "$@"',
+                "genio-xheep", f"{os.getuid()}:{os.getgid()}",
+                *normalized,
+            )
         return (
             self.conda_tool,
             "run",

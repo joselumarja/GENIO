@@ -20,8 +20,9 @@ evaluación funcional
 El host de ejecución debe proporcionar:
 
 - Un checkout existente de GR-HEEP, indicado mediante `gr_heep_path`.
-- El entorno Conda `core-v-mini-mcu`.
-- El toolchain RISC-V y FuseSoC disponibles dentro de ese entorno.
+- Docker accesible por el usuario y una imagen X-HEEP con el toolchain preparado.
+- Alternativamente, sin `docker_image`, el entorno Conda local `core-v-mini-mcu`
+  con el toolchain RISC-V y FuseSoC disponibles.
 - Vitis y Vitis Libraries para el step HLS anterior.
 
 El ejemplo `use_cases/insect_segmentation/run_random_search.py` (ejecutable desde la raiz con `python -m use_cases.insect_segmentation.run_random_search`) usa:
@@ -30,7 +31,38 @@ El ejemplo `use_cases/insect_segmentation/run_random_search.py` (ejecutable desd
 GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
 ```
 
-Cada comando X-HEEP se ejecuta como:
+Las sesiones Python seleccionan la imagen mediante `XHEEP_DOCKER_IMAGE`, que se
+pasa a `EvaluationStep.config["docker_image"]`. Los ejemplos permiten sobrescribirla
+con `GENIO_XHEEP_DOCKER_IMAGE` y usan por defecto
+`ghcr.io/x-heep/x-heep/x-heep-toolchain:v1.0.5`.
+
+Cada comando usa un contenedor temporal con el checkout aislado montado en
+`/workspace/x-heep`, conservando los resultados entre comandos en el host. Se
+ejecuta explicitamente como root (`--user 0:0`), con `LC_ALL=C` y sin sobrescribir
+`HOME`. Una shell
+`/bin/bash -lc` carga el perfil de la imagen para activar Conda y las herramientas;
+los argumentos se transmiten literalmente, sin interpolarlos como codigo shell.
+La imagen debe aceptar comandos mediante su entrypoint y proporcionar ese perfil.
+Los contenedores se eliminan al terminar y mediante `on_timeout` si vence el step.
+Solo se monta el checkout: rutas externas absolutas y enlaces a ficheros fuera de
+ese arbol no estan disponibles dentro del contenedor. Docker debe usar un daemon
+local con acceso al workspace. `docker_tool` permite cambiar el ejecutable Docker.
+
+La ejecucion como root permite utilizar directamente la imagen `v1.0.5`, cuyas
+herramientas Verible tienen directorios accesibles solo por root. No hace falta
+una imagen derivada. Al terminar cada comando, una trampa `EXIT` devuelve la
+propiedad del checkout al UID/GID del usuario del host mediante `chown -hR`, sin
+seguir enlaces simbolicos. Esto ocurre tambien si falla la herramienta, conservando
+su codigo de salida; un fallo de devolucion de propiedad tambien hace fallar el
+comando. En caso de timeout, se fuerza la eliminacion del contenedor y se intenta
+restaurar la propiedad en otro contenedor temporal.
+
+Docker solo ejecuta las herramientas y la devolucion de propiedad. La lectura de
+logs, extraccion de metricas y limpieza de workspaces permanecen en Python en el
+host. El bind mount comparte archivos y propietarios numericos; sin la devolucion
+de propiedad, los directorios creados por root pueden impedir `shutil.rmtree`.
+
+Si no se proporciona `docker_image`, cada comando X-HEEP se ejecuta como:
 
 ```bash
 conda run --no-capture-output -n core-v-mini-mcu <comando>
@@ -59,6 +91,7 @@ xheep_step = EvaluationStep(
             application_name="genio_trans_flash_mem",
         ),
         "gr_heep_path": Path("/home/joselu/Universidad/Doctorado/GEN-HEEP"),
+        "docker_image": "ghcr.io/x-heep/x-heep/x-heep-toolchain:v1.0.5",
     },
     timeout_seconds=1800,
 )
@@ -129,7 +162,8 @@ make verilator-run
 ```
 
 El checkout se copia de forma aislada para cada individuo. Los enlaces simbólicos se
-preservan, especialmente:
+preservan. Se excluyen los directorios `.kilo` para que GR-HEEP no descubra plantillas
+de otros checkouts dentro de `.kilo/worktrees`. En particular se conserva:
 
 ```text
 sw/build -> ../hw/vendor/x-heep/sw/build

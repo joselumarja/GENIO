@@ -57,6 +57,9 @@ HLS_TIMEOUT_SECONDS = 30 * 60
 
 GR_HEEP_PATH = Path("/home/joselu/Universidad/Doctorado/GEN-HEEP")
 XHEEP_TIMEOUT_SECONDS = 30 * 60
+XHEEP_DOCKER_IMAGE = os.environ.get(
+    "GENIO_XHEEP_DOCKER_IMAGE", "ghcr.io/x-heep/x-heep/x-heep-toolchain:v1.0.5"
+)
 
 
 def stop_on_signal(signum, _frame) -> None:
@@ -131,6 +134,7 @@ def main() -> None:
                 application_name="genio_trans_mem_mem_burst_saturation",
             ),
             "gr_heep_path": GR_HEEP_PATH,
+            "docker_image": XHEEP_DOCKER_IMAGE,
             "input_image_path": first_input_image(IMAGES_PATH),
         },
         timeout_seconds=XHEEP_TIMEOUT_SECONDS,
